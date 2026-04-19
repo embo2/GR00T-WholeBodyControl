@@ -244,6 +244,20 @@ class PicoStreamer(BaseStreamer):
         # Normalize the output to be between -1 and 1 after dead zone
         return sign * (abs(value) - dead_zone) / (1.0 - dead_zone)
 
+    def _update_brainco(self, pico_data):
+        print("PICO TRIGGERS", pico_data['right_trigger'], pico_data['left_trigger'])
+        for side in ("left", "right"):
+            closed = pico_data[f"{side}_trigger"] > 0.5
+            print(side, closed)
+            attr = f"_{side}_closed"
+            if closed != getattr(self, attr):
+                self._hand_sock.send(
+                    b"hand_cmd"
+                    + msgpack.packb({"side": side, "grip": 1.0 if closed else 0.0})
+                )
+                setattr(self, attr, closed)
+                print(f"[brainco] {side} -> {'close' if closed else 'open'}")
+
     def _generate_finger_data(self, pico_data, hand):
         """Generate finger position data."""
         fingertips = np.zeros([25, 4, 4])

@@ -97,6 +97,26 @@ except ImportError:
     get_g1_key_frame_poses = None
 
 
+_BRAINCO_SOCK = None
+
+
+def _brainco_update(left_trigger: float, right_trigger: float) -> None:
+    """Send atomic combined-grip frame to the BrainCo bridge on tcp://localhost:5560.
+
+    One message carries both sides — the bridge dispatches left and right
+    together, so CONFLATE on the bridge SUB can never drop a side.
+    """
+    global _BRAINCO_SOCK
+    if _BRAINCO_SOCK is None:
+        _BRAINCO_SOCK = zmq.Context.instance().socket(zmq.PUB)
+        _BRAINCO_SOCK.connect("tcp://localhost:5560")
+        time.sleep(0.3)  # PUB slow-joiner handshake
+    _BRAINCO_SOCK.send(
+        b"hand_cmd"
+        + msgpack.packb({"left": float(left_trigger), "right": float(right_trigger)})
+    )
+
+
 class LocomotionMode(IntEnum):
     """Locomotion mode enum for robot movement."""
 
@@ -1278,6 +1298,7 @@ class PoseStreamer:
         (left_menu_button, left_trigger, right_trigger, left_grip, right_grip) = (
             get_controller_inputs()
         )
+        _brainco_update(left_trigger, right_trigger)
         # Get A and B button states for data collection control
         a_pressed, b_pressed, x_pressed, y_pressed = get_abxy_buttons()
 
@@ -1760,6 +1781,7 @@ class PlannerStreamer:
                     left_grip,
                     right_grip,
                 ) = get_controller_inputs()
+                _brainco_update(left_trigger, right_trigger)
                 lh_joints, rh_joints = compute_hand_joints_from_inputs(
                     self.left_hand_ik_solver,
                     self.right_hand_ik_solver,

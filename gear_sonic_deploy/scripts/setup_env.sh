@@ -1,11 +1,27 @@
-#!/bin/bash
-
+#!/usr/bin/env bash
 # Environment setup script to replace shell.nix functionality
+# Compatible with both bash and zsh.
 # Source this file: source scripts/setup_env.sh
 
-echo "🔧 Setting up G1 Deploy environment..."
+# --- Shell detection ---
+# When sourced, the shebang is ignored, so detect the actual running shell.
+if [ -n "$ZSH_VERSION" ]; then
+    _SHELL_TYPE="zsh"
+elif [ -n "$BASH_VERSION" ]; then
+    _SHELL_TYPE="bash"
+else
+    _SHELL_TYPE="other"
+fi
 
+# Save the original PATH so we can guarantee system directories survive
+# any sub-script (e.g. ROS2 setup) that might clobber it.
+_ORIG_PATH="$PATH"
+
+echo "🔧 Setting up G1 Deploy environment... (detected shell: $_SHELL_TYPE)"
+
+# -----------------------------------------------------------------------
 # Run jetson_clocks on Jetson systems (bare-metal only)
+# -----------------------------------------------------------------------
 if command -v jetson_clocks &> /dev/null; then
     if [ -f "/.dockerenv" ]; then
         # Inside Docker - skip (jetson_clocks needs host access)
@@ -17,13 +33,17 @@ if command -v jetson_clocks &> /dev/null; then
     fi
 fi
 
+# -----------------------------------------------------------------------
 # Detect system architecture for platform-specific setup
+# -----------------------------------------------------------------------
 ARCH=$(uname -m)
 
+# -----------------------------------------------------------------------
 # Set up ONNX Runtime environment - check multiple possible locations
+# -----------------------------------------------------------------------
 ONNX_RUNTIME_PATHS=(
     "/opt/onnxruntime"
-    "/usr/local/onnxruntime" 
+    "/usr/local/onnxruntime"
     "/usr/lib/onnxruntime"
     "$HOME/.local/onnxruntime"
     "/opt/intel/openvino/runtime/3rdparty/onnx_runtime"
@@ -50,7 +70,9 @@ if [ "$ONNX_FOUND" = false ]; then
     fi
 fi
 
-# Auto-detect system architecture and library paths for different distributions
+# -----------------------------------------------------------------------
+# Auto-detect system architecture and library paths
+# -----------------------------------------------------------------------
 DISTRO_ID=""
 
 # Detect Linux distribution
@@ -65,7 +87,6 @@ fi
 # Set system library directory based on distribution and architecture
 case "$DISTRO_ID" in
     ubuntu|debian|linuxmint)
-        # Debian-based distributions use multiarch paths
         if [ "$ARCH" = "x86_64" ]; then
             SYSTEM_LIB_DIR="/usr/lib/x86_64-linux-gnu"
         elif [ "$ARCH" = "aarch64" ]; then
@@ -75,30 +96,26 @@ case "$DISTRO_ID" in
         fi
         ;;
     fedora|rhel|centos|rocky|almalinux)
-        # Red Hat-based distributions typically use lib64 for 64-bit
-        if [[ "$ARCH" == "x86_64" || "$ARCH" == "aarch64" ]]; then
+        if [ "$ARCH" = "x86_64" ] || [ "$ARCH" = "aarch64" ]; then
             SYSTEM_LIB_DIR="/usr/lib64"
         else
             SYSTEM_LIB_DIR="/usr/lib"
         fi
         ;;
     opensuse*|sles)
-        # SUSE distributions also use lib64
-        if [[ "$ARCH" == "x86_64" || "$ARCH" == "aarch64" ]]; then
+        if [ "$ARCH" = "x86_64" ] || [ "$ARCH" = "aarch64" ]; then
             SYSTEM_LIB_DIR="/usr/lib64"
         else
             SYSTEM_LIB_DIR="/usr/lib"
         fi
         ;;
     arch|manjaro)
-        # Arch Linux uses standard lib structure
         SYSTEM_LIB_DIR="/usr/lib"
         ;;
     *)
-        # Generic fallback - try to detect best path
-        if [ -d "/usr/lib/$ARCH-linux-gnu" ]; then
-            SYSTEM_LIB_DIR="/usr/lib/$ARCH-linux-gnu"
-        elif [ -d "/usr/lib64" ] && [[ "$ARCH" == "x86_64" || "$ARCH" == "aarch64" ]]; then
+        if [ -d "/usr/lib/${ARCH}-linux-gnu" ]; then
+            SYSTEM_LIB_DIR="/usr/lib/${ARCH}-linux-gnu"
+        elif [ -d "/usr/lib64" ] && { [ "$ARCH" = "x86_64" ] || [ "$ARCH" = "aarch64" ]; }; then
             SYSTEM_LIB_DIR="/usr/lib64"
         else
             SYSTEM_LIB_DIR="/usr/lib"
@@ -108,19 +125,23 @@ esac
 
 echo "🔍 Detected: $DISTRO_ID on $ARCH, using library path: $SYSTEM_LIB_DIR"
 
+# -----------------------------------------------------------------------
 # Set up CMake paths - use dynamically detected paths
+# -----------------------------------------------------------------------
 CMAKE_PATHS="$SYSTEM_LIB_DIR/cmake"
 
 # Add ONNX Runtime path if we found one
 if [ -n "$onnxruntime_DIR" ]; then
-    ONNX_BASE_PATH=$(dirname $(dirname $onnxruntime_DIR))  # Remove /lib/cmake/onnxruntime to get base path
+    ONNX_BASE_PATH=$(dirname "$(dirname "$onnxruntime_DIR")")
     CMAKE_PATHS="$ONNX_BASE_PATH:$CMAKE_PATHS"
 fi
 
 export CMAKE_PREFIX_PATH="$CMAKE_PATHS:$CMAKE_PREFIX_PATH"
 export OPENSSL_ROOT_DIR="/usr"
 
+# -----------------------------------------------------------------------
 # ROS2 Environment Setup - dynamically find ROS2 installation
+# -----------------------------------------------------------------------
 ROS2_FOUND=false
 
 # Common ROS2 distributions in order of preference (newest first)
@@ -131,15 +152,29 @@ for install_path in "${ROS2_INSTALL_PATHS[@]}"; do
     if [ "$ROS2_FOUND" = true ]; then
         break
     fi
-    
     for distro in "${ROS2_DISTROS[@]}"; do
-        ros2_setup_file="$install_path/$distro/setup.bash"
+        # ---- KEY FIX: pick the right setup file for the running shell ----
+        if [ "$_SHELL_TYPE" = "zsh" ]; then
+            ros2_setup_file="$install_path/$distro/setup.zsh"
+            # Fall back to the generic POSIX sh version if no zsh file exists
+            if [ ! -f "$ros2_setup_file" ]; then
+                ros2_setup_file="$install_path/$distro/local_setup.sh"
+            fi
+        else
+            ros2_setup_file="$install_path/$distro/setup.bash"
+        fi
+
         if [ -f "$ros2_setup_file" ]; then
-            source "$ros2_setup_file"
+            # Source with POSIX-compatible dot-syntax works in both shells
+            . "$ros2_setup_file"
+
             export RMW_IMPLEMENTATION=rmw_fastrtps_cpp
-            # Remove problematic system library path that conflicts with system GLIBC
-            export LD_LIBRARY_PATH=$(echo $LD_LIBRARY_PATH | tr ':' '\n' | grep -v "$SYSTEM_LIB_DIR" | tr '\n' ':' | sed 's/:$//')
-            echo "✅ ROS2 $distro found at $install_path/$distro - system manages all ROS2 dependencies"
+
+            # Remove the system library path that conflicts with system GLIBC.
+            # The sed/tr pipeline below is POSIX-safe.
+            export LD_LIBRARY_PATH=$(echo "$LD_LIBRARY_PATH" | tr ':' '\n' | grep -v "$SYSTEM_LIB_DIR" | tr '\n' ':' | sed 's/:$//')
+
+            echo "✅ ROS2 $distro found at $install_path/$distro (sourced $ros2_setup_file)"
             export HAS_ROS2=1
             export ROS_LOCALHOST_ONLY=1
             ROS2_FOUND=true
@@ -156,58 +191,75 @@ if [ "$ROS2_FOUND" = false ]; then
     export HAS_ROS2=0
 fi
 
+# -----------------------------------------------------------------------
 # Set up production FastRTPS profile
+# -----------------------------------------------------------------------
 if [ -f "src/g1/g1_deploy_onnx_ref/config/fastrtps_profile.xml" ]; then
     export FASTRTPS_DEFAULT_PROFILES_FILE="$(pwd)/src/g1/g1_deploy_onnx_ref/config/fastrtps_profile.xml"
     echo "✅ FastRTPS production profile configured"
 fi
 
+# -----------------------------------------------------------------------
 # TensorRT Environment Setup
-# Check if TensorRT_ROOT is already set, if not try to load from .bashrc
-if [ -z "$TensorRT_ROOT" ] && [ -f "$HOME/.bashrc" ]; then
-    # Extract TensorRT_ROOT from .bashrc if it exists
-    BASHRC_TENSORRT=$(grep -o 'export TensorRT_ROOT=.*' "$HOME/.bashrc" | head -n1 | cut -d'=' -f2 | tr -d '"' | envsubst)
-    if [ -n "$BASHRC_TENSORRT" ]; then
-        export TensorRT_ROOT="$BASHRC_TENSORRT"
-        echo "📋 Loaded TensorRT_ROOT from ~/.bashrc: $TensorRT_ROOT"
-    fi
+# -----------------------------------------------------------------------
+# Check if TensorRT_ROOT is already set, if not try to load from config
+if [ -z "$TensorRT_ROOT" ]; then
+    # Try .bashrc first, then .zshrc
+    for _rcfile in "$HOME/.bashrc" "$HOME/.zshrc"; do
+        if [ -f "$_rcfile" ]; then
+            _RC_TENSORRT=$(grep -o 'export TensorRT_ROOT=.*' "$_rcfile" 2>/dev/null | head -n1 | cut -d'=' -f2 | tr -d '"' | envsubst 2>/dev/null)
+            if [ -n "$_RC_TENSORRT" ]; then
+                export TensorRT_ROOT="$_RC_TENSORRT"
+                echo "📋 Loaded TensorRT_ROOT from $_rcfile: $TensorRT_ROOT"
+                break
+            fi
+        fi
+    done
+    unset _rcfile _RC_TENSORRT
 fi
 
 if [ -n "$TensorRT_ROOT" ]; then
     export LD_LIBRARY_PATH="$TensorRT_ROOT/lib:$LD_LIBRARY_PATH"
     echo "✅ TensorRT environment configured"
-    
+
     # For Jetson systems, ensure DLA libraries are accessible for runtime
-    if [[ "$ARCH" == "aarch64" ]] && [[ -f "/etc/nv_tegra_release" || -d "/usr/src/jetson_multimedia_api" ]]; then
+    if [ "$ARCH" = "aarch64" ] && { [ -f "/etc/nv_tegra_release" ] || [ -d "/usr/src/jetson_multimedia_api" ]; }; then
         echo "🤖 Jetson system detected - setting up DLA library paths for runtime"
-        
-        # Create missing libcudla.so.1 symlink if needed (TensorRT expects this name)
+
+        # Create missing libcudla.so.1 symlink if needed
         if [ -f "/usr/lib/aarch64-linux-gnu/nvidia/libnvcudla.so" ] && [ ! -f "/usr/lib/aarch64-linux-gnu/nvidia/libcudla.so.1" ]; then
             echo "   🔗 Creating libcudla.so.1 symlink for TensorRT compatibility..."
             sudo ln -sf libnvcudla.so /usr/lib/aarch64-linux-gnu/nvidia/libcudla.so.1 2>/dev/null || echo "   ⚠️  Could not create symlink (may need sudo)"
             sudo ln -sf libnvcudla.so /usr/lib/aarch64-linux-gnu/nvidia/libcudla.so 2>/dev/null || echo "   ⚠️  Could not create symlink (may need sudo)"
             echo "   ✅ libcudla.so.1 → libnvcudla.so"
         fi
-        
-        # CRITICAL: Add DLA library path for runtime (this is why your executable can't run)
+
+        # CRITICAL: Add DLA library path for runtime
         export LD_LIBRARY_PATH="/usr/lib/aarch64-linux-gnu/nvidia:$LD_LIBRARY_PATH"
         echo "   📁 Added DLA library path to current session"
-        
-        # Make it persistent so you don't need to run setup_env.sh every time
-        if ! grep -q "/usr/lib/aarch64-linux-gnu/nvidia" ~/.bashrc 2>/dev/null; then
-            echo 'export LD_LIBRARY_PATH="/usr/lib/aarch64-linux-gnu/nvidia:$LD_LIBRARY_PATH"' >> ~/.bashrc
-            echo "   ✅ Added DLA library path to ~/.bashrc for future sessions"
+
+        # Make it persistent - write to the correct RC file
+        _PERSIST_RC="$HOME/.bashrc"
+        if [ "$_SHELL_TYPE" = "zsh" ]; then
+            _PERSIST_RC="$HOME/.zshrc"
         fi
-        
+        if ! grep -q "/usr/lib/aarch64-linux-gnu/nvidia" "$_PERSIST_RC" 2>/dev/null; then
+            echo 'export LD_LIBRARY_PATH="/usr/lib/aarch64-linux-gnu/nvidia:$LD_LIBRARY_PATH"' >> "$_PERSIST_RC"
+            echo "   ✅ Added DLA library path to $_PERSIST_RC for future sessions"
+        fi
+        unset _PERSIST_RC
+
         echo "   ℹ️  Your executable should now be able to find DLA libraries at runtime"
     fi
 else
     echo "⚠️  TensorRT_ROOT is not set"
-    echo "   Please install TensorRT and add 'export TensorRT_ROOT=/path/to/tensorrt' to your ~/.bashrc"
-    echo "   Or source ~/.bashrc before running this script"
+    echo "   Please install TensorRT and add 'export TensorRT_ROOT=/path/to/tensorrt' to your shell RC file"
+    echo "   Or source your RC file before running this script"
 fi
 
+# -----------------------------------------------------------------------
 # CUDA Environment Setup
+# -----------------------------------------------------------------------
 echo "🔧 Setting up CUDA environment..."
 
 # Function to detect and set CUDA toolkit root
@@ -217,35 +269,35 @@ setup_cuda_toolkit() {
         echo "✅ CUDA toolkit found: CUDAToolkit_ROOT already set to $CUDAToolkit_ROOT"
         return 0
     fi
-    
+
     # Check for nvcc in PATH first
     if command -v nvcc &> /dev/null; then
         NVCC_PATH=$(command -v nvcc)
-        CUDA_ROOT=$(dirname $(dirname "$NVCC_PATH"))
+        CUDA_ROOT=$(dirname "$(dirname "$NVCC_PATH")")
         export CUDAToolkit_ROOT="$CUDA_ROOT"
         echo "✅ CUDA toolkit found in PATH: $CUDAToolkit_ROOT"
         return 0
     fi
-    
-    # Check common CUDA installation paths (including CUDA 12.6 for newer Jetson)
+
+    # Check common CUDA installation paths
     CUDA_PATHS=(
         "/usr/local/cuda"
-        "/usr/local/cuda-12.6"  # CUDA 12.6 on newer Jetson
-        "/usr/local/cuda-12.5"  # CUDA 12.5 variant
-        "/usr/local/cuda-12.4"  # CUDA 12.4 variant
+        "/usr/local/cuda-12.6"
+        "/usr/local/cuda-12.5"
+        "/usr/local/cuda-12.4"
         "/usr/local/cuda-12"
-        "/usr/local/cuda-11.4"  # Common on older Jetson
+        "/usr/local/cuda-11.4"
         "/usr/local/cuda-11"
-        "/usr/local/cuda-10.2"  # Common on older Jetson
+        "/usr/local/cuda-10.2"
         "/usr/local/cuda-10"
         "/opt/cuda"
         "/usr/cuda"
     )
-    
+
     for cuda_path in "${CUDA_PATHS[@]}"; do
         if [ -f "$cuda_path/bin/nvcc" ]; then
             export CUDAToolkit_ROOT="$cuda_path"
-            export CUDA_HOME="$cuda_path"  # Alternative name CMake might use
+            export CUDA_HOME="$cuda_path"
             export PATH="$cuda_path/bin:$PATH"
             export LD_LIBRARY_PATH="$cuda_path/lib64:$cuda_path/lib:$LD_LIBRARY_PATH"
             echo "✅ CUDA toolkit found at: $CUDAToolkit_ROOT"
@@ -254,7 +306,7 @@ setup_cuda_toolkit() {
             return 0
         fi
     done
-    
+
     return 1
 }
 
@@ -263,9 +315,9 @@ if setup_cuda_toolkit; then
     # Add CUDA library paths
     if [ -n "$CUDAToolkit_ROOT" ]; then
         export LD_LIBRARY_PATH="$CUDAToolkit_ROOT/lib64:$CUDAToolkit_ROOT/lib:$LD_LIBRARY_PATH"
-        
-        # For Jetson with CUDA 12.6+, also add the targets/aarch64-linux/lib path for libcudla
-        if [[ "$ARCH" == "aarch64" ]] && [ -d "$CUDAToolkit_ROOT/targets/aarch64-linux/lib" ]; then
+
+        # For Jetson with CUDA 12.6+, also add the targets/aarch64-linux/lib path
+        if [ "$ARCH" = "aarch64" ] && [ -d "$CUDAToolkit_ROOT/targets/aarch64-linux/lib" ]; then
             export LD_LIBRARY_PATH="$CUDAToolkit_ROOT/targets/aarch64-linux/lib:$LD_LIBRARY_PATH"
             echo "   ✅ Added CUDA aarch64-linux libraries (includes libcudla for TensorRT DLA support)"
         fi
@@ -276,8 +328,6 @@ else
 fi
 
 # Set up CUDA runtime libraries (fallback)
-# Note: Only add nvidia path if we don't already have CUDA toolkit paths set up
-# This prevents conflicts where libnvcudla.so shadows the correct libcudla.so from CUDA toolkit
 if [ -z "$CUDAToolkit_ROOT" ] && [ -d "/usr/lib/aarch64-linux-gnu/nvidia/" ]; then
     export LD_LIBRARY_PATH="/usr/lib/aarch64-linux-gnu/nvidia/:$LD_LIBRARY_PATH"
     echo "✅ CUDA runtime libraries found (aarch64)"
@@ -301,12 +351,12 @@ if [ -d "/opt/onnxruntime/lib" ]; then
     export LD_LIBRARY_PATH="/opt/onnxruntime/lib:$LD_LIBRARY_PATH"
 fi
 
+# -----------------------------------------------------------------------
 # Set up Git LFS (if not already done)
+# -----------------------------------------------------------------------
 if command -v git-lfs &> /dev/null; then
     git lfs install &> /dev/null
     echo "✅ Git LFS configured"
-    
-    # Pull large files if in git repository
     if [ -d ".git" ]; then
         echo "📥 Pulling Git LFS files..."
         git lfs pull
@@ -315,13 +365,36 @@ else
     echo "⚠️  Git LFS not found. Please install git-lfs package."
 fi
 
+# -----------------------------------------------------------------------
+# Restore system PATH directories
+# -----------------------------------------------------------------------
+# This is the critical fix: ensure essential system directories are always
+# present in PATH, even if a sub-script (like ROS2 setup) clobbered them.
+_ensure_in_path() {
+    case ":$PATH:" in
+        *":$1:"*) ;;  # already present
+        *) export PATH="$PATH:$1" ;;
+    esac
+}
+
+_ensure_in_path "/usr/local/sbin"
+_ensure_in_path "/usr/local/bin"
+_ensure_in_path "/usr/sbin"
+_ensure_in_path "/usr/bin"
+_ensure_in_path "/sbin"
+_ensure_in_path "/bin"
+
+unset -f _ensure_in_path
+
+# -----------------------------------------------------------------------
 # Verify essential tools
+# -----------------------------------------------------------------------
 echo ""
 echo "🔍 Verifying essential tools:"
 
 check_command() {
     if command -v "$1" &> /dev/null; then
-        echo "✅ $1: $(command -v $1)"
+        echo "✅ $1: $(command -v "$1")"
     else
         echo "❌ $1: not found"
     fi
@@ -331,17 +404,24 @@ check_command cmake
 check_command clang
 check_command just
 check_command git
+check_command sudo
 
 echo ""
 echo "🎉 Environment setup complete!"
 echo ""
 echo "📝 You can now run:"
-echo "   just build    # Build the project"
-echo "   just --list   # See all available commands"
+echo "   just build       # Build the project"
+echo "   just --list      # See all available commands"
 echo ""
 
-# Optional: Add this setup to the current shell session persistence
-if [ -n "$BASH_VERSION" ]; then
+# -----------------------------------------------------------------------
+# Shell prompt indicator (optional cosmetic)
+# -----------------------------------------------------------------------
+if [ "$_SHELL_TYPE" = "bash" ] && [ -n "$PS1" ]; then
     export PS1="(g1_deploy) $PS1"
+elif [ "$_SHELL_TYPE" = "zsh" ] && [ -n "$PROMPT" ]; then
+    export PROMPT="(g1_deploy) $PROMPT"
 fi
 
+# Clean up internal variables
+unset _SHELL_TYPE _ORIG_PATH
