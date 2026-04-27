@@ -111,10 +111,7 @@ def _brainco_update(left_trigger: float, right_trigger: float) -> None:
         _BRAINCO_SOCK = zmq.Context.instance().socket(zmq.PUB)
         _BRAINCO_SOCK.connect("tcp://localhost:5560")
         time.sleep(0.3)  # PUB slow-joiner handshake
-    _BRAINCO_SOCK.send(
-        b"hand_cmd"
-        + msgpack.packb({"left": float(left_trigger), "right": float(right_trigger)})
-    )
+    _BRAINCO_SOCK.send(b"hand_cmd" + msgpack.packb({"left": float(left_trigger), "right": float(right_trigger)}))
 
 
 class LocomotionMode(IntEnum):
@@ -263,9 +260,7 @@ def _process_3pt_pose(smpl_pose_np):
     # Output: body_poses[i] = [x, y, z, qw, qx, qy, qz] in robot frame (scalar-first)
     body_poses = np.zeros((smpl_pose_np.shape[0], 7), dtype=np.float32)
     for i in range(smpl_pose_np.shape[0]):
-        pos, orn = _compute_rel_transform(
-            smpl_pose_np[i], [0, 0, 0, 0, 0, 0, 1], scalar_first=False
-        )
+        pos, orn = _compute_rel_transform(smpl_pose_np[i], [0, 0, 0, 0, 0, 0, 1], scalar_first=False)
         body_poses[i, :3] = pos  # Position in robot frame
         body_poses[i, 3:] = orn  # Quaternion [qw, qx, qy, qz] in robot frame
 
@@ -298,9 +293,7 @@ def _process_3pt_pose(smpl_pose_np):
 
         # Apply offset: new_rotation = original_rotation * OFFSET
         # This post-multiplies the offset (intrinsic rotation)
-        rot_quat = (sRot.from_quat(quat, scalar_first=True) * OFFSETS[rel_i]).as_quat(
-            scalar_first=False
-        )
+        rot_quat = (sRot.from_quat(quat, scalar_first=True) * OFFSETS[rel_i]).as_quat(scalar_first=False)
 
         kp_poses[rel_i, 3:] = rot_quat  # Store as scalar-last temporarily for scipy compatibility
         kp_poses[rel_i, :3] = pos
@@ -321,9 +314,9 @@ def _process_3pt_pose(smpl_pose_np):
 
         # Orientation: compute relative rotation (root_inv * keypoint_rot)
         # Result stored as scalar-FIRST [qw, qx, qy, qz]
-        kp_poses[i, 3:] = (
-            sRot.from_quat(root_quat).inv() * sRot.from_quat(kp_poses[i, 3:])
-        ).as_quat(scalar_first=True)
+        kp_poses[i, 3:] = (sRot.from_quat(root_quat).inv() * sRot.from_quat(kp_poses[i, 3:])).as_quat(
+            scalar_first=True
+        )
 
     # =========================================================================
     # STEP 5: Return only L-Wrist, R-Wrist, Neck (skip Root)
@@ -370,9 +363,7 @@ def run_vr3pt_live_visualizer():
     Captures one frame from Pico and displays it alongside reference frames.
     """
     if xrt is None:
-        raise ImportError(
-            "XRoboToolkit SDK not available. Install xrobotoolkit_sdk to use live visualizer."
-        )
+        raise ImportError("XRoboToolkit SDK not available. Install xrobotoolkit_sdk to use live visualizer.")
 
     if VR3PtPoseVisualizer is None:
         raise ImportError("VR3PtPoseVisualizer not available. Install pyvista: pip install pyvista")
@@ -420,9 +411,7 @@ def run_vr3pt_realtime_visualizer(update_hz: int = 10):
         update_hz: Update rate in Hz (default 10)
     """
     if xrt is None:
-        raise ImportError(
-            "XRoboToolkit SDK not available. Install xrobotoolkit_sdk to use realtime visualizer."
-        )
+        raise ImportError("XRoboToolkit SDK not available. Install xrobotoolkit_sdk to use realtime visualizer.")
 
     if VR3PtPoseVisualizer is None:
         raise ImportError("VR3PtPoseVisualizer not available. Install pyvista: pip install pyvista")
@@ -742,9 +731,7 @@ def _quat_lerp_normalized(q0: np.ndarray, q1: np.ndarray, alpha: float) -> np.nd
     return q
 
 
-def _interp_pose_axis_angle(
-    prev_pose: np.ndarray, curr_pose: np.ndarray, alpha: float
-) -> np.ndarray:
+def _interp_pose_axis_angle(prev_pose: np.ndarray, curr_pose: np.ndarray, alpha: float) -> np.ndarray:
     """
     Interpolate axis-angle joint poses by converting to quats, lerp-normalize, then back.
     prev_pose, curr_pose: (21,3) axis-angle (rotvec)
@@ -818,9 +805,7 @@ class PicoReader:
                     self._latest = sample
                 now = time.time()
                 if now - last_report >= 5.0:
-                    print(
-                        f"[PicoReader] dt_ts: {device_dt*1000.0:.2f} ms, fps: {self._fps_ema:.2f}"
-                    )
+                    print(f"[PicoReader] dt_ts: {device_dt * 1000.0:.2f} ms, fps: {self._fps_ema:.2f}")
                     last_report = now
             except Exception as e:
                 print(f"[PicoReader] read error: {e}")
@@ -843,9 +828,7 @@ def _pose_stream_common(
 ):
     """Shared pose streaming loop used by run_pico."""
     if xrt is None:
-        raise ImportError(
-            "XRoboToolkit SDK not available. Install xrobotoolkit_sdk to run pose streaming."
-        )
+        raise ImportError("XRoboToolkit SDK not available. Install xrobotoolkit_sdk to run pose streaming.")
 
     # Create reader and start it
     reader = PicoReader(max_queue_size=buffer_size)
@@ -1083,12 +1066,8 @@ class ThreePointPose:
 
         g1_lwrist_pos = g1_poses["left_wrist"]["position"]
         g1_rwrist_pos = g1_poses["right_wrist"]["position"]
-        g1_lwrist_rot = sRot.from_quat(
-            g1_poses["left_wrist"]["orientation_wxyz"], scalar_first=True
-        )
-        g1_rwrist_rot = sRot.from_quat(
-            g1_poses["right_wrist"]["orientation_wxyz"], scalar_first=True
-        )
+        g1_lwrist_rot = sRot.from_quat(g1_poses["left_wrist"]["orientation_wxyz"], scalar_first=True)
+        g1_rwrist_rot = sRot.from_quat(g1_poses["right_wrist"]["orientation_wxyz"], scalar_first=True)
 
         # Compute position offsets: calibrated = neck_corrected - offset
         self._calibration_lwrist_offset = lwrist_pos_corrected - g1_lwrist_pos
@@ -1125,31 +1104,23 @@ class ThreePointPose:
 
         # Wrist positions: rotate by neck inverse, then subtract offset
         if self._calibration_lwrist_offset is not None:
-            calibrated[0, :3] = (
-                calib_inv_rot.apply(vr_3pt_pose[0, :3]) - self._calibration_lwrist_offset
-            )
+            calibrated[0, :3] = calib_inv_rot.apply(vr_3pt_pose[0, :3]) - self._calibration_lwrist_offset
         if self._calibration_rwrist_offset is not None:
-            calibrated[1, :3] = (
-                calib_inv_rot.apply(vr_3pt_pose[1, :3]) - self._calibration_rwrist_offset
-            )
+            calibrated[1, :3] = calib_inv_rot.apply(vr_3pt_pose[1, :3]) - self._calibration_rwrist_offset
 
         # Wrist orientations: rot_offset * (neck_inv * current)
         if self._calibration_lwrist_rot_offset is not None:
             lw_corrected = calib_inv_rot * sRot.from_quat(vr_3pt_pose[0, 3:], scalar_first=True)
-            calibrated[0, 3:] = (self._calibration_lwrist_rot_offset * lw_corrected).as_quat(
-                scalar_first=True
-            )
+            calibrated[0, 3:] = (self._calibration_lwrist_rot_offset * lw_corrected).as_quat(scalar_first=True)
         if self._calibration_rwrist_rot_offset is not None:
             rw_corrected = calib_inv_rot * sRot.from_quat(vr_3pt_pose[1, 3:], scalar_first=True)
-            calibrated[1, 3:] = (self._calibration_rwrist_rot_offset * rw_corrected).as_quat(
-                scalar_first=True
-            )
+            calibrated[1, 3:] = (self._calibration_rwrist_rot_offset * rw_corrected).as_quat(scalar_first=True)
 
         # Neck position via kinematic chain: root → torso_link (+Z) → neck (along calibrated Z)
         neck_z = sRot.from_quat(calibrated[2, 3:], scalar_first=True).apply([0, 0, 1])
-        calibrated[2, :3] = (
-            np.array([0, 0, self.TORSO_LINK_OFFSET_Z]) + self.NECK_LINK_LENGTH * neck_z
-        ).astype(np.float32)
+        calibrated[2, :3] = (np.array([0, 0, self.TORSO_LINK_OFFSET_Z]) + self.NECK_LINK_LENGTH * neck_z).astype(
+            np.float32
+        )
 
         return calibrated
 
@@ -1208,9 +1179,7 @@ class PoseStreamer:
         self.reader = reader
         self.three_point = three_point
 
-        self.device = (
-            torch.device("cuda") if use_cuda and torch.cuda.is_available() else torch.device("cpu")
-        )
+        self.device = torch.device("cuda") if use_cuda and torch.cuda.is_available() else torch.device("cpu")
 
         if record_dir:
             os.makedirs(record_dir, exist_ok=True)
@@ -1264,9 +1233,7 @@ class PoseStreamer:
         self.toggle_data_collection_last = False
         self.toggle_data_abort_last = False
 
-        self.buffer_cleared = (
-            True  # Start with buffer cleared - wait for full buffer before first send
-        )
+        self.buffer_cleared = True  # Start with buffer cleared - wait for full buffer before first send
         self.yaw_accumulator = YawAccumulator()
 
     def reset_yaw(self):
@@ -1292,12 +1259,8 @@ class PoseStreamer:
             time.sleep(0.005)
             return
 
-        latest_data = compute_from_body_poses(
-            self.parent_indices, self.device, sample["body_poses_np"]
-        )
-        (left_menu_button, left_trigger, right_trigger, left_grip, right_grip) = (
-            get_controller_inputs()
-        )
+        latest_data = compute_from_body_poses(self.parent_indices, self.device, sample["body_poses_np"])
+        (left_menu_button, left_trigger, right_trigger, left_grip, right_grip) = get_controller_inputs()
         _brainco_update(left_trigger, right_trigger)
         # Get A and B button states for data collection control
         a_pressed, b_pressed, x_pressed, y_pressed = get_abxy_buttons()
@@ -1322,15 +1285,11 @@ class PoseStreamer:
             right_trigger,
             right_grip,
         )
-        smpl_pose_np = (
-            latest_data["smpl_pose"].detach().cpu().numpy()[:, :63].reshape(-1, 21, 3)[0]
-        ).astype(np.float32)
-        smpl_joints_np = (
-            latest_data["smpl_joints_local"].detach().cpu().numpy()[0].astype(np.float32)
+        smpl_pose_np = (latest_data["smpl_pose"].detach().cpu().numpy()[:, :63].reshape(-1, 21, 3)[0]).astype(
+            np.float32
         )
-        body_quat_np = (
-            latest_data["global_orient_quat"].detach().cpu().numpy()[0].astype(np.float32)
-        )
+        smpl_joints_np = latest_data["smpl_joints_local"].detach().cpu().numpy()[0].astype(np.float32)
+        body_quat_np = latest_data["global_orient_quat"].detach().cpu().numpy()[0].astype(np.float32)
         curr_stamp_ns = int(sample.get("timestamp_ns", 0))
         step_ns = int(1e9 / max(1, self.target_fps))
         if self.prev_stamp_ns is None:
@@ -1355,12 +1314,8 @@ class PoseStreamer:
         elif alpha > 1.0:
             alpha = 1.0
         use_joints = (1.0 - alpha) * self.prev_smpl_joints_np + alpha * smpl_joints_np
-        use_pose = _interp_pose_axis_angle(self.prev_smpl_pose_np, smpl_pose_np, alpha).astype(
-            np.float32
-        )
-        use_body_quat = _quat_lerp_normalized(self.prev_body_quat_np, body_quat_np, alpha).astype(
-            np.float32
-        )
+        use_pose = _interp_pose_axis_angle(self.prev_smpl_pose_np, smpl_pose_np, alpha).astype(np.float32)
+        use_body_quat = _quat_lerp_normalized(self.prev_body_quat_np, body_quat_np, alpha).astype(np.float32)
         N = len(self.frame_buffer["frame_index"])
 
         ##### From @Jiefeng for directly setting the joint position ######
@@ -1387,22 +1342,14 @@ class PoseStreamer:
         smpl_r_wrist_aa = body_pose[:, SMPL_R_WRIST_IDX]
 
         g1_l_elbow_axis = np.array([0, 1, 0])
-        g1_l_elbow_q_twist, g1_l_elbow_q_swing = decompose_rotation_aa(
-            smpl_l_elbow_aa, g1_l_elbow_axis
-        )
+        g1_l_elbow_q_twist, g1_l_elbow_q_swing = decompose_rotation_aa(smpl_l_elbow_aa, g1_l_elbow_axis)
 
         g1_r_elbow_axis = np.array([0, 1, 0])
-        g1_r_elbow_q_twist, g1_r_elbow_q_swing = decompose_rotation_aa(
-            smpl_r_elbow_aa, g1_r_elbow_axis
-        )
+        g1_r_elbow_q_twist, g1_r_elbow_q_swing = decompose_rotation_aa(smpl_r_elbow_aa, g1_r_elbow_axis)
 
         # Move elbow roll/yaw into wrist while preserving wrist pitch from SMPL
-        l_elbow_swing_euler = R.from_quat(g1_l_elbow_q_swing[:, [1, 2, 3, 0]]).as_euler(
-            "XYZ", degrees=False
-        )
-        r_elbow_swing_euler = R.from_quat(g1_r_elbow_q_swing[:, [1, 2, 3, 0]]).as_euler(
-            "XYZ", degrees=False
-        )
+        l_elbow_swing_euler = R.from_quat(g1_l_elbow_q_swing[:, [1, 2, 3, 0]]).as_euler("XYZ", degrees=False)
+        r_elbow_swing_euler = R.from_quat(g1_r_elbow_q_swing[:, [1, 2, 3, 0]]).as_euler("XYZ", degrees=False)
 
         l_wrist_euler = R.from_rotvec(smpl_l_wrist_aa).as_euler("XYZ", degrees=False)
         r_wrist_euler = R.from_rotvec(smpl_r_wrist_aa).as_euler("XYZ", degrees=False)
@@ -1471,19 +1418,13 @@ class PoseStreamer:
                 "right_grip": np.array([right_grip], dtype=np.float32),
                 "pico_dt": np.array([pico_dt], dtype=np.float32),
                 "pico_fps": np.array([pico_fps], dtype=np.float32),
-                "timestamp_realtime": np.array(
-                    [sample.get("timestamp_realtime", 0.0)], dtype=np.float64
-                ),
-                "timestamp_monotonic": np.array(
-                    [sample.get("timestamp_monotonic", 0.0)], dtype=np.float64
-                ),
+                "timestamp_realtime": np.array([sample.get("timestamp_realtime", 0.0)], dtype=np.float64),
+                "timestamp_monotonic": np.array([sample.get("timestamp_monotonic", 0.0)], dtype=np.float64),
                 "left_hand_joints": left_hand_joints.reshape(-1).astype(np.float32),
                 "right_hand_joints": right_hand_joints.reshape(-1).astype(np.float32),
                 "toggle_data_collection": np.array([toggle_data_collection], dtype=bool),
                 "toggle_data_abort": np.array([toggle_data_abort], dtype=bool),
-                "heading_increment": np.array(
-                    [self.yaw_accumulator.yaw_angle_change()], dtype=np.float32
-                ),
+                "heading_increment": np.array([self.yaw_accumulator.yaw_angle_change()], dtype=np.float32),
             }
 
             packed_message = pack_pose_message(numpy_data, topic="pose")
@@ -1528,9 +1469,7 @@ def run_pico(
 ):
     """Run Pico body tracking with real-time visualization and ZMQ streaming."""
     if xrt is None:
-        raise ImportError(
-            "XRoboToolkit SDK not available. Install xrobotoolkit_sdk to run Pico streaming."
-        )
+        raise ImportError("XRoboToolkit SDK not available. Install xrobotoolkit_sdk to run Pico streaming.")
     subprocess.Popen(["bash", "/opt/apps/roboticsservice/runService.sh"])
     xrt.init()
     print("Waiting for body tracking data...")
@@ -1690,8 +1629,7 @@ class PlannerStreamer:
         else:
             # Fallback: use zeros if no feedback available
             print(
-                "[PlannerLoop] WARNING: No feedback data for VR 3PT recalibration, "
-                "using zero body_q as fallback"
+                "[PlannerLoop] WARNING: No feedback data for VR 3PT recalibration, using zero body_q as fallback"
             )
             self.three_point.reset_with_measured_q(np.zeros(29, dtype=np.float64))
 
@@ -1844,9 +1782,7 @@ def run_pico_manager(
       A+B+X+Y: Toggle policy start/stop
     """
     if xrt is None:
-        raise ImportError(
-            "XRoboToolkit SDK not available. Install xrobotoolkit_sdk to run the manager."
-        )
+        raise ImportError("XRoboToolkit SDK not available. Install xrobotoolkit_sdk to run the manager.")
     subprocess.Popen(["bash", "/opt/apps/roboticsservice/runService.sh"])
     xrt.init()
     print("Waiting for body tracking data...")
@@ -2095,7 +2031,6 @@ def run_pico_manager(
 
 
 if __name__ == "__main__":
-
     import argparse
 
     parser = argparse.ArgumentParser()
@@ -2105,9 +2040,7 @@ if __name__ == "__main__":
         "--num_frames_to_send", type=int, default=5, help="Number of frames to send (default: 200)"
     )
     parser.add_argument("--target_fps", type=int, default=50, help="Target loop FPS (default: 50)")
-    parser.add_argument(
-        "--cuda", action="store_true", help="Use CUDA for tensors and model (default: CPU)"
-    )
+    parser.add_argument("--cuda", action="store_true", help="Use CUDA for tensors and model (default: CPU)")
     parser.add_argument(
         "--record_dir",
         type=str,
