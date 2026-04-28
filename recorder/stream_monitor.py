@@ -117,10 +117,10 @@ def probe_zmq_channel(address: str, topic: bytes, timeout_ms: int = 2000) -> boo
     """Check if a ZMQ PUB socket is reachable and sending data."""
     ctx = zmq.Context()
     sock = ctx.socket(zmq.SUB)
-    sock.setsockopt(zmq.SUBSCRIBE, topic)
     sock.setsockopt(zmq.CONFLATE, 1)
     sock.setsockopt(zmq.RCVTIMEO, timeout_ms)
     sock.connect(address)
+    sock.setsockopt(zmq.SUBSCRIBE, topic)
     try:
         sock.recv()
         return True
@@ -134,10 +134,10 @@ def probe_zmq_channel(address: str, topic: bytes, timeout_ms: int = 2000) -> boo
 def zmq_ego_rgb_thread(address: str, stats: StreamStats, stop: threading.Event):
     ctx = zmq.Context()
     sock = ctx.socket(zmq.SUB)
-    sock.connect(address)
-    sock.setsockopt(zmq.SUBSCRIBE, b"ego_view")
     sock.setsockopt(zmq.CONFLATE, 1)
     sock.setsockopt(zmq.RCVTIMEO, 500)
+    sock.connect(address)
+    sock.setsockopt(zmq.SUBSCRIBE, b"ego_view")
 
     while not stop.is_set():
         try:
@@ -155,10 +155,10 @@ def zmq_ego_rgb_thread(address: str, stats: StreamStats, stop: threading.Event):
 def zmq_depth_thread(address: str, stats: StreamStats, stop: threading.Event):
     ctx = zmq.Context()
     sock = ctx.socket(zmq.SUB)
-    sock.connect(address)
-    sock.setsockopt(zmq.SUBSCRIBE, b"depth")
     sock.setsockopt(zmq.CONFLATE, 1)
     sock.setsockopt(zmq.RCVTIMEO, 500)
+    sock.connect(address)
+    sock.setsockopt(zmq.SUBSCRIBE, b"depth")
 
     while not stop.is_set():
         try:
@@ -176,10 +176,10 @@ def zmq_depth_thread(address: str, stats: StreamStats, stop: threading.Event):
 def zmq_pico_thread(address: str, stats: StreamStats, stop: threading.Event):
     ctx = zmq.Context()
     sock = ctx.socket(zmq.SUB)
-    sock.connect(address)
-    sock.setsockopt(zmq.SUBSCRIBE, b"pose")
     sock.setsockopt(zmq.CONFLATE, 1)
     sock.setsockopt(zmq.RCVTIMEO, 500)
+    sock.connect(address)
+    sock.setsockopt(zmq.SUBSCRIBE, b"pose")
 
     while not stop.is_set():
         try:
