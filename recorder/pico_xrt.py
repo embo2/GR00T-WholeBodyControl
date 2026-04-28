@@ -1,4 +1,5 @@
 import time
+import numpy as np
 
 SMPL_JOINTS = [
     "pelvis", "L_hip", "R_hip", "spine1", "L_knee", "R_knee",
@@ -7,6 +8,9 @@ SMPL_JOINTS = [
     "L_shoulder", "R_shoulder", "L_elbow", "R_elbow",
     "L_wrist", "R_wrist", "L_hand", "R_hand",
 ]
+
+
+f64 = np.float64
 
 
 class PicoXrt:
@@ -32,16 +36,15 @@ class PicoXrt:
             last_ts_ns = ts_ns
             body = xrt.get_body_joints_pose()
             yield {self.name: {
-                "t_realtime": time.time(),
-                "t_monotonic": time.monotonic(),
-                "ts_device_ns": int(ts_ns),
-                "body_joints": [list(body[i]) for i in range(24)],
-                "left_trigger": float(xrt.get_left_trigger()),
-                "right_trigger": float(xrt.get_right_trigger()),
-                "left_grip": float(xrt.get_left_grip()),
-                "right_grip": float(xrt.get_right_grip()),
-                "left_axis": list(xrt.get_left_axis()),
-                "right_axis": list(xrt.get_right_axis()),
+                "timestamp": np.int64(time.time_ns()),
+                "created": np.int64(ts_ns),
+                "body_joints": np.array([list(body[i]) for i in range(24)], f64),
+                "left_trigger": f64(xrt.get_left_trigger()),
+                "right_trigger": f64(xrt.get_right_trigger()),
+                "left_grip": f64(xrt.get_left_grip()),
+                "right_grip": f64(xrt.get_right_grip()),
+                "left_axis": np.array(list(xrt.get_left_axis()), f64),
+                "right_axis": np.array(list(xrt.get_right_axis()), f64),
                 "buttons": {
                     "A": bool(xrt.get_A_button()),
                     "B": bool(xrt.get_B_button()),

@@ -76,6 +76,8 @@ try:
 except ImportError:
     xrt = None
 
+import portal
+
 try:
     from gear_sonic.utils.teleop.solver.hand.g1_gripper_ik_solver import (
         G1GripperInverseKinematicsSolver,
@@ -1774,6 +1776,7 @@ def run_pico_manager(
     with_g1_robot: bool = True,
     enable_waist_tracking: bool = False,
     enable_smpl_vis: bool = False,
+    recorder_addr: str = "",
 ):
     """
     Manager: creates shared PUB socket and runs pose/planner streamers based on current mode.
@@ -1795,6 +1798,18 @@ def run_pico_manager(
     socket.bind(f"tcp://*:{port}")
     time.sleep(0.1)
     print(f"[Manager] ZMQ socket bound to port {port}")
+
+    # Optional connection to the recorder's portal server. When both
+    # controller grips are pressed together the manager toggles the
+    # recorder between RUNNING and PAUSED via this client.
+    recorder = None
+    if recorder_addr:
+        try:
+            recorder = portal.Client(recorder_addr, name="ManagerToRecorder")
+            print(f"[Manager] portal.Client → {recorder_addr} (start/pause via both grips)")
+        except Exception as e:
+            print(f"[Manager] WARNING: failed to connect to recorder at {recorder_addr}: {e}")
+            recorder = None
 
     # Print available locomotion modes
     try:
@@ -1863,13 +1878,29 @@ def run_pico_manager(
         prev_by_pressed = False
         prev_start_combo = False
         prev_left_axis_click = False
+        prev_both_grips = False
+        recorder_running = False
         while True:
             # Poll Pico controller for buttons/axes
             a_pressed, b_pressed, x_pressed, y_pressed = get_abxy_buttons()
 
-            left_menu_button, _, _, left_grip_mgr, _ = get_controller_inputs()
+            left_menu_button, _, _, left_grip_mgr, right_grip_mgr = get_controller_inputs()
 
             left_axis_click, _ = get_axis_clicks()
+
+            # Rising edge: both grips pressed together -> toggle recorder
+            both_grips = (left_grip_mgr > 0.5) and (right_grip_mgr > 0.5)
+            if both_grips and not prev_both_grips and recorder is not None:
+                recorder_running = not recorder_running
+                try:
+                    if recorder_running:
+                        recorder.start()
+                        print("[Manager] recorder -> RUNNING (both grips)")
+                    else:
+                        recorder.pause()
+                        print("[Manager] recorder -> PAUSED (both grips)")
+                except Exception as e:
+                    print(f"[Manager] recorder toggle failed: {e}")
 
             # Rising edge: A+X pressed together -> toggle POSE/PLANNER mode
             ax_pressed = (a_pressed) and (x_pressed)
@@ -2018,6 +2049,7 @@ def run_pico_manager(
             prev_by_pressed = by_pressed
             prev_start_combo = start_combo
             prev_left_axis_click = left_axis_click
+            prev_both_grips = both_grips
 
     except KeyboardInterrupt:
         print("\nStopping manager...")
@@ -2111,6 +2143,13 @@ if __name__ == "__main__":
         action="store_true",
         help="Enable SMPL body joint visualization (24 joint spheres) in the VR3pt viewer",
     )
+    parser.add_argument(
+        "--recorder_addr",
+        type=str,
+        default="",
+        help="portal.Server address of the recorder (e.g. localhost:6000). "
+             "Empty disables recorder start/pause integration.",
+    )
     args = parser.parse_args()
 
     # Standalone VR3Pt test modes (exit after finishing)
@@ -2151,6 +2190,7 @@ if __name__ == "__main__":
             with_g1_robot=with_g1_robot,
             enable_waist_tracking=args.waist_tracking,
             enable_smpl_vis=args.vis_smpl,
+            recorder_addr=args.recorder_addr,
         )
     else:
         # Run legacy single-thread pose streaming
