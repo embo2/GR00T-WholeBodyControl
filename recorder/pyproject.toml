@@ -10,7 +10,9 @@ dependencies = [
     "msgpack",
     "ipdb",
     "elements",
+    "mediapy",
     "portal",
+    "granular",
     "unitree_sdk2py",
 ]
 

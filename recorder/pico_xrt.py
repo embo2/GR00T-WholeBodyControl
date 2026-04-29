@@ -18,6 +18,10 @@ class PicoXrt:
         self.name = name
         self._xrt = None
 
+    @property
+    def spec(self):
+        return {self.name: 'tree'}
+
     def init(self):
         import xrobotoolkit_sdk as xrt
         self._xrt = xrt

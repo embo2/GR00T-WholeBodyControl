@@ -1,4 +1,3 @@
-import queue as _queue
 import time
 
 import numpy as np
@@ -11,21 +10,36 @@ NUM_MOTORS = 29
 
 class UnitreeRobot:
     def __init__(self, name="unitree_robot", interface="",
-                 topic="rt/lowstate", domain_id=0,
-                 queue_max=10000, sub_queue_len=100):
+                 topic="rt/lowstate", domain_id=0):
+        assert interface
         self.name = name
         self.interface = interface
-        self.topic = topic
         self.domain_id = domain_id
-        self.queue_max = queue_max
-        self.sub_queue_len = sub_queue_len
-        self._q = None
-        self._sub = None
+        self.topic = topic
 
-    def _on_lowstate(self, msg):
+    def init(self):
+        ChannelFactoryInitialize(self.domain_id, self.interface)
+        self.sub = ChannelSubscriber(self.topic, LowState_)
+        self.sub.Init(None, 0)
+
+    @property
+    def spec(self):
+      return {self.name: 'tree'}
+
+    def stream(self):
+        while True:
+            msg = self.sub.Read()
+            if msg is None:
+              continue
+            yield self._process(msg)
+
+    def _process(self, msg):
         motors = msg.motor_state[:NUM_MOTORS]
-        payload = {
+        metadata = {
             "timestamp": np.int64(time.time_ns()),
+            "created": np.int64(time.time_ns()),
+        }
+        data = {
             "mode_pr": np.int64(msg.mode_pr),
             "mode_machine": np.int64(msg.mode_machine),
             "q": np.array([m.q for m in motors], np.float64),
@@ -36,46 +50,19 @@ class UnitreeRobot:
             "imu_gyro": np.array(msg.imu_state.gyroscope, np.float64),
             "imu_accel": np.array(msg.imu_state.accelerometer, np.float64),
         }
-        try:
-            self._q.put_nowait(payload)
-        except _queue.Full:
-            pass
+        return {self.name: {'metadata': metadata, 'data': data}}
 
-    def init(self):
-        self._q = _queue.Queue(maxsize=self.queue_max)
-        ChannelFactoryInitialize(self.domain_id, self.interface)
-        self._sub = ChannelSubscriber(self.topic, LowState_)
-        self._sub.Init(self._on_lowstate, self.sub_queue_len)
-        while self._q.empty():
-            time.sleep(0.01)
-
-    def stream(self):
-        while True:
-            yield {self.name: self._q.get()}
 
 
 if __name__ == "__main__":
-    import argparse
-    p = argparse.ArgumentParser()
-    p.add_argument("--interface", default="enP8p1s0",
-                   help="DDS network interface (default: enP8p1s0, the G1 robot LAN on this Orin)")
-    args = p.parse_args()
-    obj = UnitreeRobot(interface=args.interface)
-    print(f"[{obj.name}] init... (interface={args.interface!r})", flush=True)
+    interface = 'enP8p1s0'
+    obj = UnitreeRobot(interface=interface)
     obj.init()
     print(f"[{obj.name}] connected. (Ctrl+C to stop)", flush=True)
-    counts = {}
-    starts = {}
-    try:
-        for d in obj.stream():
-            for key, _ in d.items():
-                counts[key] = counts.get(key, 0) + 1
-                starts.setdefault(key, time.monotonic())
-                elapsed = time.monotonic() - starts[key]
-                if elapsed >= 2.0:
-                    print(f"[{key}] {counts[key]} msgs in {elapsed:.2f}s = "
-                          f"{counts[key] / elapsed:.1f} msgs/s", flush=True)
-                    counts[key] = 0
-                    starts[key] = time.monotonic()
-    except KeyboardInterrupt:
-        pass
+    count = 0
+    start = time.perf_counter()
+    for d in obj.stream():
+        count += 1
+        elapsed = time.perf_counter()
+        fps = count / (elapsed - start)
+        print(f'{fps:.2f} msgs/s')

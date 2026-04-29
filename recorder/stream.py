@@ -1,12 +1,13 @@
 import argparse
 import collections
-import signal
 import threading
 import time
 import queue
+import concurrent.futures
 
 import elements
 import numpy as np
+import granular
 import portal
 import zmq
 
@@ -81,6 +82,40 @@ def worker(obj, addr):
     background.stop()
 
 
+def encode(chunk, spec):
+    fn = lambda *xs: np.stack(xs, 0)
+    datapoint = {}
+    metadata = {}
+    for k, v in chunk.items():
+      v = elements.tree.map(fn, *v)
+      metadata[k] = v['metadata']
+      datapoint[k] = v['data']
+    datapoint['metadata'] = metadata
+    encoders = granular.encoders
+    return {k: encoders[spec[k]](v) for k, v in datapoint.items()}
+
+
+def write_worker(pending, spec):
+  pool = concurrent.futures.ThreadPoolExecutor(32)
+  writer = granular.DatasetWriter('data', spec, None)
+  futures = collections.deque()
+  while True:
+    while True:
+      try:
+        chunk = pending.get(timeout=0.1)
+        print('got')
+      except queue.Empty:
+        break
+      future = pool.submit(encode, chunk, spec)
+      futures.append(future)
+    while len(futures) > 0 and futures[0].done():
+      future = futures.popleft()
+      print('future result')
+      writer.append(future.result())
+      print(pending.qsize())
+      print('wrote')
+
+
 def main():
     p = argparse.ArgumentParser()
     p.add_argument("--addr", type=str, default='localhost:6000')
@@ -89,10 +124,17 @@ def main():
     sensors = [
         OrinCamera(),
         UnitreeRobot(interface='enP8p1s0'),
-        PicoXrt(),
+        # PicoXrt(),
         # LivoxLidar(),
         # BrainCoHand(),
     ]
+
+    spec = {}
+    for sensor in sensors:
+      assert all(k not in spec for k in sensor.spec)
+      spec.update(sensor.spec)
+    assert 'metadata' not in spec
+    spec['metadata'] = 'tree'
 
     procs = []
     for sensor in sensors:
@@ -103,7 +145,7 @@ def main():
     port = int(args.addr.rsplit(':', 1)[1])
     chunk = collections.defaultdict(list)
 
-    running = False
+    running = True
     hud = HudStatusPublisher()
     hud.publish(running)
     print(f"[main] hud status publisher → tcp://{HUD_HOST}:{HUD_PORT} "
@@ -134,13 +176,18 @@ def main():
     server.bind('pause', pause)
     server.start(block=False)
 
+    pending = queue.Queue()
+    thread = portal.Thread(write_worker, pending, spec, start=True)
+
     interval = 2.0
     try:
       while True:
         time.sleep(interval)
         with lock:
-          print({k: len(v) / interval for k, v in chunk.items()})
-          chunk.clear()
+          if running:
+            print('putting')
+            pending.put(chunk)
+          chunk = collections.defaultdict(list)
     finally:
         print("[main] shutting down...", flush=True)
         for proc in procs:
