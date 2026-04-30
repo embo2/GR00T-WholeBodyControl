@@ -62,7 +62,7 @@ struct MotionSequence;
 class StreamedMotionMerger {
 public:
     /// Compile-time toggle for debug log output.
-    static constexpr bool DEBUG_LOGGING = true;
+    static constexpr bool DEBUG_LOGGING = false;
     /// Number of already-consumed frames to retain before the playback cursor
     /// (provides look-back for interpolation / blending).
     static constexpr int HISTORY_FRAMES = 5;

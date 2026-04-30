@@ -41,8 +41,9 @@ class OrinCamera:
 
     @property
     def spec(self):
-      #return {f'{self.name}_rgb': 'mp4', f'{self.name}_depth': 'mp4'}
-        return {f'{self.name}_rgb': 'mp4'}
+      # 'rgb' is a custom granular type meaning "raw JPEG bytes — pass
+      # through, no encoder". stream2.py wires the encoder dict for it.
+      return {f'{self.name}_rgb': 'rgb'}
 
     def stream(self):
         assert self.initialized
@@ -58,14 +59,13 @@ class OrinCamera:
                 raw = self.rgb.recv()
                 if created != last_created_rgb:
                     last_created_rgb = created
-                    image = np.frombuffer(raw, dtype=np.uint8)
-                    image = image.reshape((*self.rgb_shape, 3))
-                    image = np.ascontiguousarray(image[..., ::-1])
                     metadata = {
                         "timestamp": np.int64(time.time_ns()),
                         "created": np.int64(created),
                     }
-                    yield {rgb_key: {'metadata': metadata, 'data': image}}
+                    # JPEG bytes from the C++ publisher (q=85). Pass through
+                    # untouched; the recorder writes them as-is.
+                    yield {rgb_key: {'metadata': metadata, 'data': raw}}
 
             # if self.depth in events:
             #     self.depth.recv()
