@@ -12,6 +12,7 @@ import portal
 import zmq
 
 from brainco_hand import BrainCoHand
+from extras import Extras
 from livox_lidar import LivoxLidar
 from orin_camera import OrinCamera
 from pico_xrt import PicoXrt
@@ -58,28 +59,39 @@ class HudStatusPublisher:
         self._sock.close(0)
         self._ctx.term()
 
-# XRT
-# export CMAKE_PREFIX_PATH="$(uv run python -m pybind11 --cmakedir)"
-# uv pip install pybind11 cmake setuptools
-# uv pip install --no-build-isolation -e ../external_dependencies/XRoboToolkit-PC-Service-Pybind_X86_and_ARM64
 
-
-def worker(obj, addr):
+def worker(obj, addr, stopping, fps=30.0):
     print(f"[{obj.name}] init...", flush=True)
     obj.init()
-    print(f"[{obj.name}] connected.", flush=True)
+    print(f"[{obj.name}] connected.  (target fps={fps})", flush=True)
     client = portal.Client(addr, name=f'{obj.name}Client')
 
     pending = queue.Queue()
     def _background():
       while True:
-        client.submit(pending.get())
-    background = portal.Thread(_background, start=True)
+        data = pending.get()
+        if data is None:
+          break
+        client.submit(data)
+    thread = portal.Thread(_background, start=True)
 
-    for data in obj.stream():
-      pending.put(data)
-
-    background.stop()
+    # Drop frames that arrive faster than the target rate. Source iteration
+    # still happens at native rate (so the underlying socket/queue keeps
+    # draining), we just don't enqueue everything for portal.submit.
+    stream = obj.stream()
+    period = 1.0 / fps if fps and fps > 0 else 0.0
+    last_submit = 0.0
+    while not stopping.is_set():
+      data = next(stream)
+      if period <= 0.0:
+        pending.put(data)
+        continue
+      now = time.monotonic()
+      if now - last_submit >= period:
+        pending.put(data)
+        last_submit = now
+    pending.put(None)
+    thread.join()
 
 
 def encode(chunk, spec):
@@ -95,36 +107,47 @@ def encode(chunk, spec):
     return {k: encoders[spec[k]](v) for k, v in datapoint.items()}
 
 
-def write_worker(pending, spec):
+def write_worker(pending, spec, stopping):
   pool = concurrent.futures.ThreadPoolExecutor(32)
   writer = granular.DatasetWriter('data', spec, None)
   futures = collections.deque()
-  while True:
-    while True:
-      try:
-        chunk = pending.get(timeout=0.1)
-        print('got')
-      except queue.Empty:
-        break
-      future = pool.submit(encode, chunk, spec)
-      futures.append(future)
-    while len(futures) > 0 and futures[0].done():
-      future = futures.popleft()
-      print('future result')
-      writer.append(future.result())
-      print(pending.qsize())
-      print('wrote')
+  try:
+    while not stopping.is_set():
+      while True:
+        try:
+          chunk = pending.get(timeout=0.1)
+        except queue.Empty:
+          break
+        print('received keys', chunk.keys())
+        keys = set(chunk.keys())
+        needed = set(spec.keys()) - {'metadata'}
+        if keys != needed:
+          print('missing keys, skipping...', needed - keys)
+          break
+        future = pool.submit(encode, chunk, spec)
+        futures.append(future)
+      while len(futures) > 0 and futures[0].done():
+        future = futures.popleft()
+        writer.append(future.result())
+        print('wrote chunk')
+        print(pending.qsize())
+  finally:
+    writer.close()
+  print('[writer] closed; index flushed.', flush=True)
 
 
 def main():
     p = argparse.ArgumentParser()
     p.add_argument("--addr", type=str, default='localhost:6000')
+    p.add_argument("--fps", type=float, default=30.0,
+                   help="per-sensor throttle target. 0 disables throttling.")
     args = p.parse_args()
 
     sensors = [
-        OrinCamera(),
+        #OrinCamera(),
         UnitreeRobot(interface='enP8p1s0'),
-        # PicoXrt(),
+        PicoXrt(),
+        Extras(),
         # LivoxLidar(),
         # BrainCoHand(),
     ]
@@ -136,48 +159,47 @@ def main():
     assert 'metadata' not in spec
     spec['metadata'] = 'tree'
 
+    sensor_stopping = portal.context.mp.Event()
     procs = []
     for sensor in sensors:
-        proc = portal.Process(worker, sensor, args.addr, start=True)
+        proc = portal.Process(
+            worker, sensor, args.addr, sensor_stopping, args.fps, start=True
+        )
         procs.append(proc)
 
     lock = threading.Lock()
     port = int(args.addr.rsplit(':', 1)[1])
     chunk = collections.defaultdict(list)
 
-    running = True
+    running = False
     hud = HudStatusPublisher()
     hud.publish(running)
     print(f"[main] hud status publisher → tcp://{HUD_HOST}:{HUD_PORT} "
           f"(initial={'RUNNING' if running else 'PAUSED'})", flush=True)
 
-    def start():
-      nonlocal running
-      running = True
-      hud.publish(running)
-      print("[main] recorder RUNNING", flush=True)
-
-    def pause():
-      nonlocal running
-      running = False
-      hud.publish(running)
-      print("[main] recorder PAUSED", flush=True)
-
     def submit(data):
+      nonlocal running
+      if 'extras' in data and data['extras']['data']['is_first']:
+        running = True
+        hud.publish(True)
+        print("[main] recorder RUNNING (extras is_first)", flush=True)
       if not running:
         return
       with lock:
         for k, v in data.items():
           chunk[k].append(v)
+      if 'extras' in data and data['extras']['data']['is_last']:
+        running = False
+        hud.publish(False)
+        print("[main] recorder PAUSED (extras is_last)", flush=True)
 
     server = portal.Server(port)
     server.bind('submit', submit)
-    server.bind('start', start)
-    server.bind('pause', pause)
     server.start(block=False)
 
     pending = queue.Queue()
-    thread = portal.Thread(write_worker, pending, spec, start=True)
+    write_stopping = threading.Event()
+    thread = portal.Thread(write_worker, pending, spec, write_stopping, start=True)
 
     interval = 2.0
     try:
@@ -185,16 +207,16 @@ def main():
         time.sleep(interval)
         with lock:
           if running:
-            print('putting')
             pending.put(chunk)
           chunk = collections.defaultdict(list)
-    finally:
+    except KeyboardInterrupt:
         print("[main] shutting down...", flush=True)
+        sensor_stopping.set()
         for proc in procs:
-            proc.kill()
-        for proc in procs:
-            proc.join(timeout=2.0)
+            proc.join()
         server.close()
+        write_stopping.set()
+        thread.join()
         hud.close()
 
 

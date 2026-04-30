@@ -41,7 +41,8 @@ class OrinCamera:
 
     @property
     def spec(self):
-        return {f'{self.name}_rgb': 'mp4', f'{self.name}_depth': 'mp4'}
+      #return {f'{self.name}_rgb': 'mp4', f'{self.name}_depth': 'mp4'}
+        return {f'{self.name}_rgb': 'mp4'}
 
     def stream(self):
         assert self.initialized
@@ -65,19 +66,20 @@ class OrinCamera:
                         "created": np.int64(created),
                     }
                     yield {rgb_key: {'metadata': metadata, 'data': image}}
-            if self.depth in events:
-                self.depth.recv()
-                created = struct.unpack("<Q", self.depth.recv())[0]
-                raw = self.depth.recv()
-                if created != last_created_depth:
-                    last_created_depth = created
-                    image = np.frombuffer(raw, dtype=np.uint16)
-                    image = image.reshape(self.depth_shape)
-                    metadata = {
-                        "timestamp": np.int64(time.time_ns()),
-                        "created": np.int64(created),
-                    }
-                    yield {depth_key: {'metadata': metadata, 'data': image}}
+
+            # if self.depth in events:
+            #     self.depth.recv()
+            #     created = struct.unpack("<Q", self.depth.recv())[0]
+            #     raw = self.depth.recv()
+            #     if created != last_created_depth:
+            #         last_created_depth = created
+            #         image = np.frombuffer(raw, dtype=np.uint16)
+            #         image = image.reshape(self.depth_shape)
+            #         metadata = {
+            #             "timestamp": np.int64(time.time_ns()),
+            #             "created": np.int64(created),
+            #         }
+            #         yield {depth_key: {'metadata': metadata, 'data': image}}
 
     def _make_sub(self, ctx, addr, topic):
         s = ctx.socket(zmq.SUB)

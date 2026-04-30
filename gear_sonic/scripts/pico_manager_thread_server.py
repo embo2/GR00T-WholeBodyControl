@@ -76,8 +76,6 @@ try:
 except ImportError:
     xrt = None
 
-import portal
-
 try:
     from gear_sonic.utils.teleop.solver.hand.g1_gripper_ik_solver import (
         G1GripperInverseKinematicsSolver,
@@ -1776,7 +1774,7 @@ def run_pico_manager(
     with_g1_robot: bool = True,
     enable_waist_tracking: bool = False,
     enable_smpl_vis: bool = False,
-    recorder_addr: str = "",
+    recorder_pub: bool = True,
 ):
     """
     Manager: creates shared PUB socket and runs pose/planner streamers based on current mode.
@@ -1799,18 +1797,6 @@ def run_pico_manager(
     time.sleep(0.1)
     print(f"[Manager] ZMQ socket bound to port {port}")
 
-    # Optional connection to the recorder's portal server. When both
-    # controller grips are pressed together the manager toggles the
-    # recorder between RUNNING and PAUSED via this client.
-    recorder = None
-    if recorder_addr:
-        try:
-            recorder = portal.Client(recorder_addr, name="ManagerToRecorder")
-            print(f"[Manager] portal.Client → {recorder_addr} (start/pause via both grips)")
-        except Exception as e:
-            print(f"[Manager] WARNING: failed to connect to recorder at {recorder_addr}: {e}")
-            recorder = None
-
     # Print available locomotion modes
     try:
         print("[Manager] Available modes:")
@@ -1822,6 +1808,79 @@ def run_pico_manager(
     # Create shared reader and 3-point pose processor
     reader = PicoReader(max_queue_size=buffer_size)
     reader.start()
+
+    # Raw xrt broadcaster — publishes the controller/headset state at the
+    # headset's native rate so other processes (e.g. recorder/pico_xrt.py)
+    # don't need their own xrt.init(). The PC-Service only honors a single
+    # SDK client, so this is the canonical rebroadcast path.
+    # Gated on `recorder_pub` so the manager can run standalone without
+    # binding the extra port or spawning a publisher thread.
+    extra_lock = threading.Lock()
+    extra_pending = {"is_first": False, "is_last": False, "reward": False}
+    if recorder_pub:
+        xrt_pub_ctx = zmq.Context.instance()
+        xrt_pub = xrt_pub_ctx.socket(zmq.PUB)
+        xrt_pub.setsockopt(zmq.SNDHWM, 16)
+        xrt_pub.setsockopt(zmq.LINGER, 0)
+        xrt_pub.bind("tcp://*:5572")
+        print("[Manager] xrt PUB bound on tcp://*:5572 (topics=\"xrt\", \"extra\")")
+    else:
+        xrt_pub = None
+        print("[Manager] recorder publisher DISABLED (--no-recorder_pub)")
+
+    def _xrt_publish_loop():
+        last_ts_ns = 0
+        while True:
+            sample = reader.get_latest()
+            if sample is None:
+                time.sleep(0.005)
+                continue
+            ts_ns = int(sample.get("timestamp_ns", 0))
+            if ts_ns == last_ts_ns:
+                time.sleep(1e-4)
+                continue
+            last_ts_ns = ts_ns
+            body = sample["body_poses_np"]
+            try:
+                payload = {
+                    "ts_device_ns": ts_ns,
+                    "body_joints": body.tolist(),
+                    "left_trigger": float(xrt.get_left_trigger()),
+                    "right_trigger": float(xrt.get_right_trigger()),
+                    "left_grip": float(xrt.get_left_grip()),
+                    "right_grip": float(xrt.get_right_grip()),
+                    "left_axis": list(xrt.get_left_axis()),
+                    "right_axis": list(xrt.get_right_axis()),
+                    "buttons": {
+                        "A": bool(xrt.get_A_button()),
+                        "B": bool(xrt.get_B_button()),
+                        "X": bool(xrt.get_X_button()),
+                        "Y": bool(xrt.get_Y_button()),
+                        "menu": bool(xrt.get_left_menu_button()),
+                    },
+                }
+                xrt_pub.send(b"xrt" + msgpack.packb(payload, use_bin_type=True),
+                             zmq.NOBLOCK)
+                # Paired "extra" frame: episode boundaries and per-grasp reward.
+                # Reads-and-clears the pending flags atomically.
+                with extra_lock:
+                    extra = {
+                        "created": int(time.time_ns()),
+                        "is_first": bool(extra_pending["is_first"]),
+                        "is_last": bool(extra_pending["is_last"]),
+                        "reward": 1.0 if extra_pending["reward"] else 0.0,
+                    }
+                    extra_pending["is_first"] = False
+                    extra_pending["is_last"] = False
+                    extra_pending["reward"] = False
+                xrt_pub.send(b"extra" + msgpack.packb(extra, use_bin_type=True),
+                             zmq.NOBLOCK)
+            except Exception as e:
+                # Don't kill the broadcaster on a bad frame; just log occasionally.
+                print(f"[xrt_pub] skipped frame: {e}")
+    if recorder_pub:
+        threading.Thread(target=_xrt_publish_loop, daemon=True,
+                         name="xrt-publisher").start()
 
     three_point = ThreePointPose(
         enable_vis_vr3pt=enable_vis_vr3pt,
@@ -1878,6 +1937,7 @@ def run_pico_manager(
         prev_by_pressed = False
         prev_start_combo = False
         prev_left_axis_click = False
+        prev_right_axis_click = False
         prev_both_grips = False
         recorder_running = False
         while True:
@@ -1886,21 +1946,26 @@ def run_pico_manager(
 
             left_menu_button, _, _, left_grip_mgr, right_grip_mgr = get_controller_inputs()
 
-            left_axis_click, _ = get_axis_clicks()
+            left_axis_click, right_axis_click = get_axis_clicks()
 
-            # Rising edge: both grips pressed together -> toggle recorder
+            # Recorder hooks (gated on --recorder_pub). Both-grips edge sets
+            # reward=1.0 for the next "extra" frame; R3 click toggles the
+            # recorder via is_first / is_last on the next "extra" frame.
             both_grips = (left_grip_mgr > 0.5) and (right_grip_mgr > 0.5)
-            if both_grips and not prev_both_grips and recorder is not None:
-                recorder_running = not recorder_running
-                try:
-                    if recorder_running:
-                        recorder.start()
-                        print("[Manager] recorder -> RUNNING (both grips)")
-                    else:
-                        recorder.pause()
-                        print("[Manager] recorder -> PAUSED (both grips)")
-                except Exception as e:
-                    print(f"[Manager] recorder toggle failed: {e}")
+            if recorder_pub:
+                if both_grips and not prev_both_grips:
+                    with extra_lock:
+                        extra_pending["reward"] = True
+                    print("[Manager] reward=1.0 (both grips, via extras)")
+                if right_axis_click and not prev_right_axis_click:
+                    recorder_running = not recorder_running
+                    with extra_lock:
+                        if recorder_running:
+                            extra_pending["is_first"] = True
+                        else:
+                            extra_pending["is_last"] = True
+                    print(f"[Manager] recorder -> "
+                          f"{'RUNNING' if recorder_running else 'PAUSED'} (R3, via extras)")
 
             # Rising edge: A+X pressed together -> toggle POSE/PLANNER mode
             ax_pressed = (a_pressed) and (x_pressed)
@@ -2049,6 +2114,7 @@ def run_pico_manager(
             prev_by_pressed = by_pressed
             prev_start_combo = start_combo
             prev_left_axis_click = left_axis_click
+            prev_right_axis_click = right_axis_click
             prev_both_grips = both_grips
 
     except KeyboardInterrupt:
@@ -2144,11 +2210,11 @@ if __name__ == "__main__":
         help="Enable SMPL body joint visualization (24 joint spheres) in the VR3pt viewer",
     )
     parser.add_argument(
-        "--recorder_addr",
-        type=str,
-        default="",
-        help="portal.Server address of the recorder (e.g. localhost:6000). "
-             "Empty disables recorder start/pause integration.",
+        "--recorder_pub",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Publish raw xrt + extras frames on tcp://*:5572 for the recorder. "
+             "Use --no-recorder_pub to disable when running the manager standalone.",
     )
     args = parser.parse_args()
 
@@ -2190,7 +2256,7 @@ if __name__ == "__main__":
             with_g1_robot=with_g1_robot,
             enable_waist_tracking=args.waist_tracking,
             enable_smpl_vis=args.vis_smpl,
-            recorder_addr=args.recorder_addr,
+            recorder_pub=args.recorder_pub,
         )
     else:
         # Run legacy single-thread pose streaming

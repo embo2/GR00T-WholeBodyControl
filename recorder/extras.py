@@ -4,30 +4,13 @@ import msgpack
 import numpy as np
 import zmq
 
-SMPL_JOINTS = [
-    "pelvis", "L_hip", "R_hip", "spine1", "L_knee", "R_knee",
-    "spine2", "L_ankle", "R_ankle", "spine3", "L_foot", "R_foot",
-    "neck", "L_collar", "R_collar", "head",
-    "L_shoulder", "R_shoulder", "L_elbow", "R_elbow",
-    "L_wrist", "R_wrist", "L_hand", "R_hand",
-]
-
-
 f64 = np.float64
 
 
-class PicoXrt:
-    """Subscribes to the xrt rebroadcast on tcp://<host>:<port> topic 'xrt'.
+class Extras:
+    TOPIC = b"extra"
 
-    The XRoboToolkit PC-Service only honors a single SDK client, so only
-    pico_manager_thread_server.py talks to xrt directly. This class simply
-    consumes its msgpack ZMQ broadcast and reshapes back into the same
-    yield format pico_xrt used to produce when it called the SDK itself.
-    """
-
-    TOPIC = b"xrt"
-
-    def __init__(self, name="pico_xrt", host="localhost", port=5572):
+    def __init__(self, name="extras", host="localhost", port=5572):
         self.name = name
         self.host = host
         self.port = port
@@ -48,7 +31,7 @@ class PicoXrt:
         self._poller = zmq.Poller()
         self._poller.register(self._sock, zmq.POLLIN)
         # Block until we see at least one frame so callers know the
-        # publisher is alive (matches OrinCamera/BrainCoHand behaviour).
+        # publisher is alive (matches OrinCamera/PicoXrt behaviour).
         while not dict(self._poller.poll(timeout=1000)):
             pass
 
@@ -63,29 +46,18 @@ class PicoXrt:
             msg = msgpack.unpackb(payload, raw=False)
             metadata = {
                 "timestamp": np.int64(time.time_ns()),
-                "created": np.int64(msg["ts_device_ns"]),
+                "created": np.int64(msg["created"]),
             }
             data = {
-                "body_joints": np.array(msg["body_joints"], f64),
-                "left_trigger": f64(msg["left_trigger"]),
-                "right_trigger": f64(msg["right_trigger"]),
-                "left_grip": f64(msg["left_grip"]),
-                "right_grip": f64(msg["right_grip"]),
-                "left_axis": np.array(msg["left_axis"], f64),
-                "right_axis": np.array(msg["right_axis"], f64),
-                "buttons": {
-                    "A": bool(msg["buttons"]["A"]),
-                    "B": bool(msg["buttons"]["B"]),
-                    "X": bool(msg["buttons"]["X"]),
-                    "Y": bool(msg["buttons"]["Y"]),
-                    "menu": bool(msg["buttons"]["menu"]),
-                },
+                "is_first": bool(msg["is_first"]),
+                "is_last": bool(msg["is_last"]),
+                "reward": f64(msg["reward"]),
             }
             yield {self.name: {'metadata': metadata, 'data': data}}
 
 
 if __name__ == "__main__":
-    obj = PicoXrt()
+    obj = Extras()
     obj.init()
     print(f"[{obj.name}] connected. (Ctrl+C to stop)", flush=True)
     count = 0
