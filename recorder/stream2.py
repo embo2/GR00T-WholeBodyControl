@@ -169,6 +169,10 @@ def worker(sensor, running_event, stopping_event, session_dir, fps):
                     # Also tell the headset HUD to flash green for ~1s.
                     if float(data.get('reward', 0.0)) >= 1.0:
                         print(f'[{sensor.name}] reward=1.0', flush=True)
+                        reward_put_in = data['reward_put_in']
+                        print(f'[{sensor.name}] reward_put_in={reward_put_in}', flush=True)
+                        reward_take_out = data['reward_take_out']
+                        print(f'[{sensor.name}] reward_take_out={reward_take_out}', flush=True)
                         if hud:
                             hud.reward()
 

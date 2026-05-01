@@ -42,13 +42,21 @@ class UnitreeRobot:
         data = {
             "mode_pr": np.int64(msg.mode_pr),
             "mode_machine": np.int64(msg.mode_machine),
+            "tick": np.uint32(msg.tick),
             "q": np.array([m.q for m in motors], np.float64),
             "dq": np.array([m.dq for m in motors], np.float64),
+            "ddq": np.array([m.ddq for m in motors], np.float64),
             "tau": np.array([m.tau_est for m in motors], np.float64),
+            "vol": np.array([m.vol for m in motors], np.float64),
+            "motor_mode": np.array([m.mode for m in motors], np.uint8),
+            "motor_state_flags": np.array([m.motorstate for m in motors], np.uint32),
+            "temp_coil": np.array([m.temperature[0] for m in motors], np.int16),
+            "temp_case": np.array([m.temperature[1] for m in motors], np.int16),
             "imu_quat": np.array(msg.imu_state.quaternion, np.float64),
             "imu_rpy": np.array(msg.imu_state.rpy, np.float64),
             "imu_gyro": np.array(msg.imu_state.gyroscope, np.float64),
             "imu_accel": np.array(msg.imu_state.accelerometer, np.float64),
+            "imu_temp": np.int16(msg.imu_state.temperature),
         }
         return {self.name: {'metadata': metadata, 'data': data}}
 

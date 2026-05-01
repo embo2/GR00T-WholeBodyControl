@@ -52,6 +52,8 @@ class Extras:
                 "is_first": bool(msg["is_first"]),
                 "is_last": bool(msg["is_last"]),
                 "reward": f64(msg["reward"]),
+                "reward_put_in": f64(msg.get("reward_put_in", 0.0)),
+                "reward_take_out": f64(msg.get("reward_take_out", 0.0)),
             }
             yield {self.name: {'metadata': metadata, 'data': data}}
 

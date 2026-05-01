@@ -1816,7 +1816,10 @@ def run_pico_manager(
     # Gated on `recorder_pub` so the manager can run standalone without
     # binding the extra port or spawning a publisher thread.
     extra_lock = threading.Lock()
-    extra_pending = {"is_first": False, "is_last": False, "reward": False}
+    extra_pending = {
+        "is_first": False, "is_last": False,
+        "reward": False, "reward_put_in": False, "reward_take_out": False,
+    }
     if recorder_pub:
         xrt_pub_ctx = zmq.Context.instance()
         xrt_pub = xrt_pub_ctx.socket(zmq.PUB)
@@ -1869,10 +1872,14 @@ def run_pico_manager(
                         "is_first": bool(extra_pending["is_first"]),
                         "is_last": bool(extra_pending["is_last"]),
                         "reward": 1.0 if extra_pending["reward"] else 0.0,
+                        "reward_put_in": 1.0 if extra_pending["reward_put_in"] else 0.0,
+                        "reward_take_out": 1.0 if extra_pending["reward_take_out"] else 0.0,
                     }
                     extra_pending["is_first"] = False
                     extra_pending["is_last"] = False
                     extra_pending["reward"] = False
+                    extra_pending["reward_put_in"] = False
+                    extra_pending["reward_take_out"] = False
                 xrt_pub.send(b"extra" + msgpack.packb(extra, use_bin_type=True),
                              zmq.NOBLOCK)
             except Exception as e:
@@ -1938,7 +1945,8 @@ def run_pico_manager(
         prev_start_combo = False
         prev_left_axis_click = False
         prev_right_axis_click = False
-        prev_both_grips = False
+        prev_left_grip = False
+        prev_right_grip = False
         recorder_running = False
         while True:
             # Poll Pico controller for buttons/axes
@@ -1948,15 +1956,23 @@ def run_pico_manager(
 
             left_axis_click, right_axis_click = get_axis_clicks()
 
-            # Recorder hooks (gated on --recorder_pub). Both-grips edge sets
-            # reward=1.0 for the next "extra" frame; R3 click toggles the
-            # recorder via is_first / is_last on the next "extra" frame.
-            both_grips = (left_grip_mgr > 0.5) and (right_grip_mgr > 0.5)
+            # Recorder hooks (gated on --recorder_pub). Each grip rising edge
+            # sets its own reward flag (reward_put_in for left, reward_take_out
+            # for right) plus reward=1.0 on the next "extra" frame; R3 click
+            # toggles the recorder via is_first / is_last on the next "extra".
+            left_grip_now = left_grip_mgr > 0.5
+            right_grip_now = right_grip_mgr > 0.5
             if recorder_pub:
-                if both_grips and not prev_both_grips:
+                if left_grip_now and not prev_left_grip:
                     with extra_lock:
+                        extra_pending["reward_put_in"] = True
                         extra_pending["reward"] = True
-                    print("[Manager] reward=1.0 (both grips, via extras)")
+                    print("[Manager] reward_put_in=1.0 (left grip, via extras)")
+                if right_grip_now and not prev_right_grip:
+                    with extra_lock:
+                        extra_pending["reward_take_out"] = True
+                        extra_pending["reward"] = True
+                    print("[Manager] reward_take_out=1.0 (right grip, via extras)")
                 if right_axis_click and not prev_right_axis_click:
                     recorder_running = not recorder_running
                     with extra_lock:
@@ -2115,7 +2131,8 @@ def run_pico_manager(
             prev_start_combo = start_combo
             prev_left_axis_click = left_axis_click
             prev_right_axis_click = right_axis_click
-            prev_both_grips = both_grips
+            prev_left_grip = left_grip_now
+            prev_right_grip = right_grip_now
 
     except KeyboardInterrupt:
         print("\nStopping manager...")
