@@ -13,12 +13,41 @@
 #include <zmq.h>
 #include <msgpack.h>
 
+typedef struct {
+    uint8_t hardware_type;
+    uint8_t sku_type;
+    const char *serial_number;
+    const char *firmware_version;
+} DeviceInfo;
+
 typedef void* (*open_fn)(const char *port, uint32_t baudrate);
 typedef void  (*close_fn)(void *handle);
 typedef void  (*set_pos_fn)(void *handle, uint8_t slave, const uint16_t *pos, size_t n);
-typedef void* (*get_info_fn)(void *handle, uint8_t slave);
-typedef void  (*free_info_fn)(void *info);
+typedef DeviceInfo* (*get_info_fn)(void *handle, uint8_t slave);
+typedef void  (*free_info_fn)(DeviceInfo *info);
 typedef void  (*log_fn)(uint8_t level);
+
+static int init_hand(get_info_fn get_info, free_info_fn free_info,
+                     void *handle, uint8_t slave, const char *name) {
+    for (int attempt = 1; attempt <= 10; attempt++) {
+        DeviceInfo *info = get_info(handle, slave);
+        int ok = info && info->serial_number && info->serial_number[0] != '\0';
+        if (info) {
+            fprintf(stderr, "[%s] attempt %d: hw=%u sku=%u sn=%s fw=%s -> %s\n",
+                name, attempt, info->hardware_type, info->sku_type,
+                info->serial_number ? info->serial_number : "(null)",
+                info->firmware_version ? info->firmware_version : "(null)",
+                ok ? "OK" : "RETRY");
+            free_info(info);
+        } else {
+            fprintf(stderr, "[%s] attempt %d: NULL -> RETRY\n", name, attempt);
+        }
+        if (ok) return 1;
+        usleep(150000);  // 150ms between attempts
+    }
+    fprintf(stderr, "[%s] FAILED to init after retries\n", name);
+    return 0;
+}
 
 static const char *SDK_PATH = "./libbc_stark_sdk.so";
 
@@ -73,8 +102,11 @@ int main(int argc, char **argv) {
     void *right = modbus_open("/dev/right_hand", 460800);
     if (!left || !right) { fprintf(stderr, "modbus_open failed\n"); return 1; }
 
-    void *li = get_info(left,  0x7e); if (li) free_info(li);
-    void *ri = get_info(right, 0x7f); if (ri) free_info(ri);
+    if (!init_hand(get_info, free_info, left,  0x7e, "left") ||
+        !init_hand(get_info, free_info, right, 0x7f, "right")) {
+        fprintf(stderr, "hand init failed; refusing to start to avoid silent no-op writes\n");
+        return 1;
+    }
 
     int devnull = open("/dev/null", O_WRONLY);
     if (devnull >= 0) { dup2(devnull, 2); close(devnull); }

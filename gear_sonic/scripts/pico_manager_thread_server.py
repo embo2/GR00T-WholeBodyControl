@@ -101,17 +101,17 @@ _BRAINCO_SOCK = None
 
 
 def _brainco_update(left_trigger: float, right_trigger: float) -> None:
-    """Send atomic combined-grip frame to the BrainCo bridge on tcp://localhost:5560.
+    """Send atomic combined-grip frame to the BrainCo hand_server on tcp://localhost:5566.
 
-    One message carries both sides — the bridge dispatches left and right
-    together, so CONFLATE on the bridge SUB can never drop a side.
+    One message carries both sides — the server dispatches left and right
+    together, and CONFLATE on its SUB keeps only the latest.
     """
     global _BRAINCO_SOCK
     if _BRAINCO_SOCK is None:
         _BRAINCO_SOCK = zmq.Context.instance().socket(zmq.PUB)
-        _BRAINCO_SOCK.connect("tcp://localhost:5560")
+        _BRAINCO_SOCK.connect("tcp://localhost:5566")
         time.sleep(0.3)  # PUB slow-joiner handshake
-    _BRAINCO_SOCK.send(b"hand_cmd" + msgpack.packb({"left": float(left_trigger), "right": float(right_trigger)}))
+    _BRAINCO_SOCK.send(b"hand_control" + msgpack.packb({"left": float(left_trigger), "right": float(right_trigger)}))
 
 
 class LocomotionMode(IntEnum):
