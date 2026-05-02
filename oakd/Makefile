@@ -46,7 +46,7 @@ LDFLAGS += $(shell pkg-config --libs gstreamer-1.0 gstreamer-app-1.0 glib-2.0 2>
 LDFLAGS += $(shell pkg-config --libs libzmq 2>/dev/null || echo "-lzmq")
 LDFLAGS += -L/usr/local/lib -ldepthai-core -ldepthai-opencv
 
-all: $(APP)
+all: $(APP) streaming_only
 
 debug: CXXFLAGS += -DDEBUG -g3 -O0
 debug: $(APP)
@@ -59,8 +59,12 @@ $(APP): $(OBJS)
 	@echo "Linking: $@"
 	$(CXX) -o $@ $(OBJS) $(LDFLAGS)
 
+streaming_only: streaming_only.cpp network_helper.hpp
+	@echo "Linking: $@"
+	$(CXX) $(CPPFLAGS) $(CXXFLAGS) -o $@ streaming_only.cpp $(LDFLAGS)
+
 clean:
-	rm -rf $(APP) $(OBJS)
+	rm -rf $(APP) $(OBJS) streaming_only
 
 install: $(APP)
 	@echo "Installing $(APP)..."
