@@ -1,27 +1,3 @@
-# Pico SMPL stream server for body tracking visualization
-
-"""
-
-# Recommended Command Line Arguments:
-    # With VR3 PT visualization (by --vis_vr3pt) and optional SMPL body visualization (by --vis_smpl)
-    # If you want to enable waist tracking in the VR3 PT visualization, please add --waist_tracking
-    python pico_manager_thread_server.py --manager \
-        --vis_vr3pt --vis_smpl \
-        --waist_tracking
-
-    # VR3 PT visualization only (without SMPL body) — lower latency
-    python pico_manager_thread_server.py --manager --vis_vr3pt
-
-# DEBUG VR3 PT VISUALIZATION:
-    # A standalone test mode that captures one live frame and visualizes it.
-    python pico_manager_thread_server.py --vr3pt_live
-
-# TIMING COMPARISON:
-    # The visualizer automatically reports timing every 5 seconds when running:
-    #   [Vis Timing] vr3pt: X.XXms | smpl: X.XXms | render: X.XXms | vr3pt_only: X.XXms | both(vr3pt+smpl): X.XXms
-
-"""
-
 from collections import defaultdict, deque
 from enum import Enum, IntEnum
 import os
@@ -83,12 +59,6 @@ try:
 except ImportError:
     print("Warning: G1GripperInverseKinematicsSolver not available.")
     G1GripperInverseKinematicsSolver = None
-
-try:
-    from gear_sonic.utils.teleop.vis.vr3pt_pose_visualizer import VR3PtPoseVisualizer
-except ImportError:
-    print("Warning: VR3PtPoseVisualizer not available (pyvista may not be installed).")
-    VR3PtPoseVisualizer = None
 
 try:
     from gear_sonic.utils.teleop.vis.vr3pt_pose_visualizer import get_g1_key_frame_poses
@@ -327,133 +297,6 @@ def _process_3pt_pose(smpl_pose_np):
     # kp_poses[1:] = indices 1, 2, 3 = L-Wrist, R-Wrist, Neck
     # Each row: [x, y, z, qw, qx, qy, qz] relative to root, scalar-first quaternion
     return kp_poses[1:]
-
-
-# =============================================================================
-# VR 3-Point Pose Visualization Functions
-# =============================================================================
-
-
-def run_vr3pt_visualizer_test():
-    """
-    Standalone test for VR 3-point pose visualizer using PyVista.
-    Run this to verify the reference frames are displayed correctly.
-    """
-    if VR3PtPoseVisualizer is None:
-        raise ImportError("VR3PtPoseVisualizer not available. Install pyvista: pip install pyvista")
-
-    print("=" * 60)
-    print("VR 3-Point Pose Visualizer Test (PyVista)")
-    print("=" * 60)
-    print("\nExpected reference frames (all with RGB axes for XYZ):")
-    print("  1. WHITE ball at origin (0, 0, 0) - World frame")
-    print("  2. CYAN ball at (0, 0, 0.35) - Looking forward (identity)")
-    print("  3. MAGENTA ball at (0, 0.4, 0.25) - Looking left (yaw +90°)")
-    print("  4. YELLOW ball at (0.4, 0, 0.15) - Looking down (pitch +90°)")
-    print("\nClose the window to exit.")
-    print("=" * 60)
-
-    visualizer = VR3PtPoseVisualizer(axis_length=0.08, ball_radius=0.015, with_g1_robot=True)
-    visualizer.show_static()
-
-
-def run_vr3pt_live_visualizer():
-    """
-    Live visualizer for real VR 3-point pose data from Pico.
-    Captures one frame from Pico and displays it alongside reference frames.
-    """
-    if xrt is None:
-        raise ImportError("XRoboToolkit SDK not available. Install xrobotoolkit_sdk to use live visualizer.")
-
-    if VR3PtPoseVisualizer is None:
-        raise ImportError("VR3PtPoseVisualizer not available. Install pyvista: pip install pyvista")
-
-    print("=" * 60)
-    print("VR 3-Point Pose Live Visualizer (PyVista)")
-    print("=" * 60)
-
-    # Initialize XRT
-    subprocess.Popen(["bash", "/opt/apps/roboticsservice/runService.sh"])
-    xrt.init()
-    print("Waiting for body tracking data...")
-    while not xrt.is_body_data_available():
-        print("waiting for body data...")
-        time.sleep(1)
-
-    print("Body data available! Capturing VR 3-point pose...")
-
-    # Capture body poses and compute vr_3pt_pose
-    body_poses = xrt.get_body_joints_pose()
-    body_poses_np = np.array(body_poses)
-
-    # Process to get 3-point pose (L-Wrist, R-Wrist, Neck)
-    vr_3pt_pose = _process_3pt_pose(body_poses_np)
-
-    print(f"\nCaptured vr_3pt_pose shape: {vr_3pt_pose.shape}")
-    print(f"  L-Wrist: pos={vr_3pt_pose[0, :3]}, quat_wxyz={vr_3pt_pose[0, 3:]}")
-    print(f"  R-Wrist: pos={vr_3pt_pose[1, :3]}, quat_wxyz={vr_3pt_pose[1, 3:]}")
-    print(f"  Neck:    pos={vr_3pt_pose[2, :3]}, quat_wxyz={vr_3pt_pose[2, 3:]}")
-
-    print("\nDisplaying visualization...")
-    print("Close the window to exit.")
-    print("=" * 60)
-
-    visualizer = VR3PtPoseVisualizer(axis_length=0.08, ball_radius=0.015, with_g1_robot=True)
-    visualizer.show_with_vr_pose(vr_3pt_pose)
-
-
-def run_vr3pt_realtime_visualizer(update_hz: int = 10):
-    """
-    Real-time visualizer for VR 3-point pose data from Pico.
-    Continuously updates the visualization with live data.
-
-    Args:
-        update_hz: Update rate in Hz (default 10)
-    """
-    if xrt is None:
-        raise ImportError("XRoboToolkit SDK not available. Install xrobotoolkit_sdk to use realtime visualizer.")
-
-    if VR3PtPoseVisualizer is None:
-        raise ImportError("VR3PtPoseVisualizer not available. Install pyvista: pip install pyvista")
-
-    print("=" * 60)
-    print("VR 3-Point Pose Real-time Visualizer (PyVista)")
-    print("=" * 60)
-
-    # Initialize XRT
-    subprocess.Popen(["bash", "/opt/apps/roboticsservice/runService.sh"])
-    xrt.init()
-    print("Waiting for body tracking data...")
-    while not xrt.is_body_data_available():
-        print("waiting for body data...")
-        time.sleep(1)
-
-    print("Body data available! Starting real-time visualization...")
-    print(f"Update rate: {update_hz} Hz")
-    print("Close the window or press 'q' to exit.")
-    print("=" * 60)
-
-    # Use the VR3PtPoseVisualizer for real-time visualization with G1 robot
-    visualizer = VR3PtPoseVisualizer(axis_length=0.08, ball_radius=0.015, with_g1_robot=True)
-    visualizer.create_realtime_plotter(interactive=True)
-
-    try:
-        while visualizer.is_open:
-            # Get new data from Pico
-            body_poses = xrt.get_body_joints_pose()
-            body_poses_np = np.array(body_poses)
-            vr_3pt_pose = _process_3pt_pose(body_poses_np)
-
-            # Update visualization
-            visualizer.update_vr_poses(vr_3pt_pose)
-            visualizer.render()
-
-            time.sleep(1.0 / update_hz)
-    except KeyboardInterrupt:
-        print("\nInterrupted by user")
-    finally:
-        visualizer.close()
-
 
 def process_smpl_joints(body_pose, global_orient, transl):
     """Process SMPL parameters to compute local joints.
@@ -821,10 +664,6 @@ def _pose_stream_common(
     record_format: str,
     stop_event: threading.Event | None = None,
     log_prefix: str = "PoseLoop",
-    enable_vis_vr3pt: bool = False,
-    with_g1_robot: bool = True,
-    enable_waist_tracking: bool = False,
-    enable_smpl_vis: bool = False,
 ):
     """Shared pose streaming loop used by run_pico."""
     if xrt is None:
@@ -834,14 +673,7 @@ def _pose_stream_common(
     reader = PicoReader(max_queue_size=buffer_size)
     reader.start()
 
-    # Create 3-point pose processor with visualization settings
-    three_point = ThreePointPose(
-        enable_vis_vr3pt=enable_vis_vr3pt,
-        with_g1_robot=with_g1_robot,
-        enable_waist_tracking=enable_waist_tracking,
-        enable_smpl_vis=enable_smpl_vis,
-        log_prefix=log_prefix,
-    )
+    three_point = ThreePointPose(log_prefix=log_prefix)
 
     streamer = PoseStreamer(
         socket=socket,
@@ -883,16 +715,12 @@ class ThreePointPose:
     2. Wrist positions: Aligns wrist positions to match G1 robot key frame positions
     """
 
-    # Kinematic chain constants for neck position (matches VR3PtPoseVisualizer)
+    # Kinematic chain constants for neck position
     TORSO_LINK_OFFSET_Z = 0.05  # meters from root to torso_link
     NECK_LINK_LENGTH = 0.35  # meters from torso_link to neck along neck's local Z
 
     def __init__(
         self,
-        enable_vis_vr3pt: bool = False,
-        with_g1_robot: bool = True,
-        enable_waist_tracking: bool = False,
-        enable_smpl_vis: bool = False,
         log_prefix: str = "ThreePointPose",
         robot_model=None,
     ):
@@ -900,18 +728,11 @@ class ThreePointPose:
         Initialize 3-point pose processor.
 
         Args:
-            enable_vis_vr3pt: Whether to enable VR 3pt pose visualization (requires display)
-            with_g1_robot: Whether to include G1 robot in visualization
-            enable_waist_tracking: Whether to enable waist tracking in visualization
-            enable_smpl_vis: Whether to render SMPL body joints in the VR3pt visualizer
             log_prefix: Prefix for log messages
             robot_model: Optional pre-instantiated RobotModel. If None, will create one.
                         Used for FK-based calibration (no display required).
         """
         self.log_prefix = log_prefix
-        self.with_g1_robot = with_g1_robot
-        self.enable_waist_tracking = enable_waist_tracking
-        self.enable_smpl_vis = enable_smpl_vis
 
         # Robot model for FK-based calibration (headless, no display required)
         self._robot_model = robot_model
@@ -922,28 +743,6 @@ class ThreePointPose:
 
             self._robot_model = instantiate_g1_robot_model()
             print(f"[{log_prefix}] Robot model loaded for FK calibration")
-
-        # Optional visualization (requires display + PyVista)
-        self.vr3pt_visualizer = None
-        if enable_vis_vr3pt:
-            if VR3PtPoseVisualizer is None:
-                raise ImportError(
-                    "VR3PtPoseVisualizer could not be imported but --vis_vr3pt was requested. "
-                    "Ensure pyvista is installed: pip install pyvista"
-                )
-            self.vr3pt_visualizer = VR3PtPoseVisualizer(
-                axis_length=0.08,
-                ball_radius=0.015,
-                with_g1_robot=with_g1_robot,
-                robot_model=self._robot_model,
-                enable_waist_tracking=enable_waist_tracking,
-                enable_smpl_vis=enable_smpl_vis,
-            )
-            self.vr3pt_visualizer.create_realtime_plotter(interactive=True)
-            g1_str = " with G1 robot" if with_g1_robot else ""
-            waist_str = " + waist tracking" if enable_waist_tracking else ""
-            smpl_str = " + SMPL body" if enable_smpl_vis else ""
-            print(f"[{log_prefix}] VR 3pt pose visualization enabled{g1_str}{waist_str}{smpl_str}")
 
         # Calibration state — triggered explicitly by calibrate_now() or reset_with_measured_q()
         self._calibration_pending = False
@@ -993,21 +792,11 @@ class ThreePointPose:
         # Apply calibration to get the final pose
         vr_3pt_pose = self._apply_calibration(vr_3pt_pose_raw)
 
-        if self.vr3pt_visualizer is not None:
-            self.vr3pt_visualizer.update_from_vr_pose(vr_3pt_pose, waist_scale=1.0)
-            if smpl_joints_local is not None:
-                self.vr3pt_visualizer.update_smpl_joints(smpl_joints_local)
-            self.vr3pt_visualizer.render()
-
         return vr_3pt_pose
 
     def close(self) -> None:
-        """Close and cleanup visualizer resources."""
-        if self.vr3pt_visualizer is not None:
-            try:
-                self.vr3pt_visualizer.close()
-            except Exception as e:
-                print(f"[{self.log_prefix}] Warning: Error closing VR3pt visualizer: {e}")
+        """No-op for compatibility (no resources to release)."""
+        pass
 
     def calibrate_now(self, body_poses_np: np.ndarray) -> bool:
         """Calibrate using current SMPL frame against FK of all-zero body joints.
@@ -1372,13 +1161,8 @@ class PoseStreamer:
 
         # Process SMPL pose to get calibrated 3-point VR pose and update visualization
         # Pass SMPL local joints for optional body visualization in the VR3Pt viewer
-        smpl_joints_for_vis = (
-            latest_data["smpl_joints_local"].detach().cpu().numpy()[0]
-            if self.three_point.enable_smpl_vis
-            else None
-        )
         vr_3pt_pose = self.three_point.process_smpl_pose(
-            sample["body_poses_np"], smpl_joints_local=smpl_joints_for_vis
+            sample["body_poses_np"], smpl_joints_local=None
         )
         ##### From @Jiefeng for directly setting the joint position ######
 
@@ -1452,61 +1236,6 @@ class PoseStreamer:
         if elapsed < self.frame_time:
             time.sleep(self.frame_time - elapsed)
         self.frame_start = time.time()
-
-
-def run_pico(
-    buffer_size: int = 15,
-    port: int = 5556,
-    num_frames_to_send: int = 5,
-    target_fps: int = 50,
-    use_cuda: bool = False,
-    record_dir: str = "",
-    record_format: str = "npz",
-    enable_vis_vr3pt: bool = False,
-    with_g1_robot: bool = True,
-    enable_waist_tracking: bool = False,
-    enable_smpl_vis: bool = False,
-):
-    """Run Pico body tracking with real-time visualization and ZMQ streaming."""
-    if xrt is None:
-        raise ImportError("XRoboToolkit SDK not available. Install xrobotoolkit_sdk to run Pico streaming.")
-    subprocess.Popen(["bash", "/opt/apps/roboticsservice/runService.sh"])
-    xrt.init()
-    print("Waiting for body tracking data...")
-    while not xrt.is_body_data_available():
-        print("waiting for body data...")
-        time.sleep(1)
-    context = zmq.Context()
-    socket = context.socket(zmq.PUB)
-    socket.bind(f"tcp://*:{port}")
-    time.sleep(0.1)
-    print(f"ZMQ socket bound to port {port}")
-    if build_command_message is not None and build_planner_message is not None:
-        try:
-            socket.send(build_command_message(start=False, stop=False, planner=False))
-            socket.send(build_planner_message(0, [0.0, 0.0, 0.0], [1.0, 0.0, 0.0], -1.0, -1.0))
-        except Exception as e:
-            print(f"Warning: failed to send initial command/planner messages: {e}")
-    try:
-        _pose_stream_common(
-            socket=socket,
-            buffer_size=buffer_size,
-            num_frames_to_send=num_frames_to_send,
-            target_fps=target_fps,
-            use_cuda=use_cuda,
-            record_dir=record_dir,
-            record_format=record_format,
-            stop_event=None,
-            log_prefix="Main",
-            enable_vis_vr3pt=enable_vis_vr3pt,
-            with_g1_robot=with_g1_robot,
-            enable_waist_tracking=enable_waist_tracking,
-            enable_smpl_vis=enable_smpl_vis,
-        )
-    finally:
-        socket.close()
-        context.term()
-        print("Threads stopped, ZMQ socket closed")
 
 
 class FeedbackReader:
@@ -1770,11 +1499,6 @@ def run_pico_manager(
     record_format: str = "npz",
     zmq_feedback_host: str = "localhost",
     zmq_feedback_port: int = 5557,
-    enable_vis_vr3pt: bool = False,
-    with_g1_robot: bool = True,
-    enable_waist_tracking: bool = False,
-    enable_smpl_vis: bool = False,
-    recorder_pub: bool = True,
 ):
     """
     Manager: creates shared PUB socket and runs pose/planner streamers based on current mode.
@@ -1809,93 +1533,7 @@ def run_pico_manager(
     reader = PicoReader(max_queue_size=buffer_size)
     reader.start()
 
-    # Raw xrt broadcaster — publishes the controller/headset state at the
-    # headset's native rate so other processes (e.g. recorder/pico_xrt.py)
-    # don't need their own xrt.init(). The PC-Service only honors a single
-    # SDK client, so this is the canonical rebroadcast path.
-    # Gated on `recorder_pub` so the manager can run standalone without
-    # binding the extra port or spawning a publisher thread.
-    extra_lock = threading.Lock()
-    extra_pending = {
-        "is_first": False, "is_last": False,
-        "reward": False, "reward_put_in": False, "reward_take_out": False,
-    }
-    if recorder_pub:
-        xrt_pub_ctx = zmq.Context.instance()
-        xrt_pub = xrt_pub_ctx.socket(zmq.PUB)
-        xrt_pub.setsockopt(zmq.SNDHWM, 16)
-        xrt_pub.setsockopt(zmq.LINGER, 0)
-        xrt_pub.bind("tcp://*:5572")
-        print("[Manager] xrt PUB bound on tcp://*:5572 (topics=\"xrt\", \"extra\")")
-    else:
-        xrt_pub = None
-        print("[Manager] recorder publisher DISABLED (--no-recorder_pub)")
-
-    def _xrt_publish_loop():
-        last_ts_ns = 0
-        while True:
-            sample = reader.get_latest()
-            if sample is None:
-                time.sleep(0.005)
-                continue
-            ts_ns = int(sample.get("timestamp_ns", 0))
-            if ts_ns == last_ts_ns:
-                time.sleep(1e-4)
-                continue
-            last_ts_ns = ts_ns
-            body = sample["body_poses_np"]
-            try:
-                payload = {
-                    "ts_device_ns": ts_ns,
-                    "body_joints": body.tolist(),
-                    "left_trigger": float(xrt.get_left_trigger()),
-                    "right_trigger": float(xrt.get_right_trigger()),
-                    "left_grip": float(xrt.get_left_grip()),
-                    "right_grip": float(xrt.get_right_grip()),
-                    "left_axis": list(xrt.get_left_axis()),
-                    "right_axis": list(xrt.get_right_axis()),
-                    "buttons": {
-                        "A": bool(xrt.get_A_button()),
-                        "B": bool(xrt.get_B_button()),
-                        "X": bool(xrt.get_X_button()),
-                        "Y": bool(xrt.get_Y_button()),
-                        "menu": bool(xrt.get_left_menu_button()),
-                    },
-                }
-                xrt_pub.send(b"xrt" + msgpack.packb(payload, use_bin_type=True),
-                             zmq.NOBLOCK)
-                # Paired "extra" frame: episode boundaries and per-grasp reward.
-                # Reads-and-clears the pending flags atomically.
-                with extra_lock:
-                    extra = {
-                        "created": int(time.time_ns()),
-                        "is_first": bool(extra_pending["is_first"]),
-                        "is_last": bool(extra_pending["is_last"]),
-                        "reward": 1.0 if extra_pending["reward"] else 0.0,
-                        "reward_put_in": 1.0 if extra_pending["reward_put_in"] else 0.0,
-                        "reward_take_out": 1.0 if extra_pending["reward_take_out"] else 0.0,
-                    }
-                    extra_pending["is_first"] = False
-                    extra_pending["is_last"] = False
-                    extra_pending["reward"] = False
-                    extra_pending["reward_put_in"] = False
-                    extra_pending["reward_take_out"] = False
-                xrt_pub.send(b"extra" + msgpack.packb(extra, use_bin_type=True),
-                             zmq.NOBLOCK)
-            except Exception as e:
-                # Don't kill the broadcaster on a bad frame; just log occasionally.
-                print(f"[xrt_pub] skipped frame: {e}")
-    if recorder_pub:
-        threading.Thread(target=_xrt_publish_loop, daemon=True,
-                         name="xrt-publisher").start()
-
-    three_point = ThreePointPose(
-        enable_vis_vr3pt=enable_vis_vr3pt,
-        with_g1_robot=with_g1_robot,
-        enable_waist_tracking=enable_waist_tracking,
-        enable_smpl_vis=enable_smpl_vis,
-        log_prefix="PoseLoop",
-    )
+    three_point = ThreePointPose(log_prefix="PoseLoop")
 
     pose_streamer = PoseStreamer(
         socket=socket,
@@ -1944,44 +1582,13 @@ def run_pico_manager(
         prev_by_pressed = False
         prev_start_combo = False
         prev_left_axis_click = False
-        prev_right_axis_click = False
-        prev_left_grip = False
-        prev_right_grip = False
-        recorder_running = False
         while True:
             # Poll Pico controller for buttons/axes
             a_pressed, b_pressed, x_pressed, y_pressed = get_abxy_buttons()
 
-            left_menu_button, _, _, left_grip_mgr, right_grip_mgr = get_controller_inputs()
+            left_menu_button, _, _, left_grip_mgr, _ = get_controller_inputs()
 
-            left_axis_click, right_axis_click = get_axis_clicks()
-
-            # Recorder hooks (gated on --recorder_pub). Each grip rising edge
-            # sets its own reward flag (reward_put_in for left, reward_take_out
-            # for right) plus reward=1.0 on the next "extra" frame; R3 click
-            # toggles the recorder via is_first / is_last on the next "extra".
-            left_grip_now = left_grip_mgr > 0.5
-            right_grip_now = right_grip_mgr > 0.5
-            if recorder_pub:
-                if left_grip_now and not prev_left_grip:
-                    with extra_lock:
-                        extra_pending["reward_put_in"] = True
-                        extra_pending["reward"] = True
-                    print("[Manager] reward_put_in=1.0 (left grip, via extras)")
-                if right_grip_now and not prev_right_grip:
-                    with extra_lock:
-                        extra_pending["reward_take_out"] = True
-                        extra_pending["reward"] = True
-                    print("[Manager] reward_take_out=1.0 (right grip, via extras)")
-                if right_axis_click and not prev_right_axis_click:
-                    recorder_running = not recorder_running
-                    with extra_lock:
-                        if recorder_running:
-                            extra_pending["is_first"] = True
-                        else:
-                            extra_pending["is_last"] = True
-                    print(f"[Manager] recorder -> "
-                          f"{'RUNNING' if recorder_running else 'PAUSED'} (R3, via extras)")
+            left_axis_click, _ = get_axis_clicks()
 
             # Rising edge: A+X pressed together -> toggle POSE/PLANNER mode
             ax_pressed = (a_pressed) and (x_pressed)
@@ -2130,9 +1737,6 @@ def run_pico_manager(
             prev_by_pressed = by_pressed
             prev_start_combo = start_combo
             prev_left_axis_click = left_axis_click
-            prev_right_axis_click = right_axis_click
-            prev_left_grip = left_grip_now
-            prev_right_grip = right_grip_now
 
     except KeyboardInterrupt:
         print("\nStopping manager...")
@@ -2185,108 +1789,16 @@ if __name__ == "__main__":
         default=5557,
         help="ZMQ feedback port (default: 5557)",
     )
-    parser.add_argument(
-        "--vr3pt_test",
-        action="store_true",
-        help="Run VR 3-point pose visualizer test (reference frames only)",
-    )
-    parser.add_argument(
-        "--vr3pt_live",
-        action="store_true",
-        help="Capture one frame of VR 3-point pose and visualize with reference frames",
-    )
-    parser.add_argument(
-        "--vr3pt_realtime",
-        action="store_true",
-        help="Run standalone real-time VR 3-point pose visualizer",
-    )
-    parser.add_argument(
-        "--vis_vr3pt",
-        action="store_true",
-        help="Enable inline VR 3-point pose visualization in pose streaming mode",
-    )
-    parser.add_argument(
-        "--vr3pt_hz",
-        type=int,
-        default=10,
-        help="Update rate for real-time VR visualization in Hz (default: 10)",
-    )
-    parser.add_argument(
-        "--no_g1",
-        action="store_true",
-        help="Disable G1 robot visualization in VR 3pt pose view (G1 is shown by default)",
-    )
-    parser.add_argument(
-        "--waist_tracking",
-        action="store_true",
-        help="Enable G1 robot waist to follow VR head orientation (disabled by default for performance)",
-    )
-    parser.add_argument(
-        "--vis_smpl",
-        action="store_true",
-        help="Enable SMPL body joint visualization (24 joint spheres) in the VR3pt viewer",
-    )
-    parser.add_argument(
-        "--recorder_pub",
-        action=argparse.BooleanOptionalAction,
-        default=True,
-        help="Publish raw xrt + extras frames on tcp://*:5572 for the recorder. "
-             "Use --no-recorder_pub to disable when running the manager standalone.",
-    )
     args = parser.parse_args()
 
-    # Standalone VR3Pt test modes (exit after finishing)
-    if args.vr3pt_test:
-        print("Running VR 3-point pose visualizer test...")
-        run_vr3pt_visualizer_test()
-        print("VR 3-point pose visualizer test completed")
-        exit(0)
-
-    if args.vr3pt_live:
-        print("Running VR 3-point pose live capture...")
-        run_vr3pt_live_visualizer()
-        print("VR 3-point pose live visualizer completed")
-        exit(0)
-
-    if args.vr3pt_realtime:
-        print("Running VR 3-point pose real-time visualizer...")
-        run_vr3pt_realtime_visualizer(update_hz=args.vr3pt_hz)
-        print("VR 3-point pose real-time visualizer completed")
-        exit(0)
-
-    # Main execution modes
-    # G1 robot visualization is enabled by default when vis_vr3pt is used
-    with_g1_robot = not args.no_g1
-
-    if args.manager:
-        run_pico_manager(
-            port=args.port,
-            buffer_size=args.buffer_size,
-            num_frames_to_send=args.num_frames_to_send,
-            target_fps=args.target_fps,
-            use_cuda=args.cuda,
-            record_dir=args.record_dir,
-            record_format=args.record_format,
-            zmq_feedback_host=args.zmq_feedback_host,
-            zmq_feedback_port=args.zmq_feedback_port,
-            enable_vis_vr3pt=args.vis_vr3pt,
-            with_g1_robot=with_g1_robot,
-            enable_waist_tracking=args.waist_tracking,
-            enable_smpl_vis=args.vis_smpl,
-            recorder_pub=args.recorder_pub,
-        )
-    else:
-        # Run legacy single-thread pose streaming
-        run_pico(
-            buffer_size=args.buffer_size,
-            port=args.port,
-            num_frames_to_send=args.num_frames_to_send,
-            target_fps=args.target_fps,
-            use_cuda=args.cuda,
-            record_dir=args.record_dir,
-            record_format=args.record_format,
-            enable_vis_vr3pt=args.vis_vr3pt,
-            with_g1_robot=with_g1_robot,
-            enable_waist_tracking=args.waist_tracking,
-            enable_smpl_vis=args.vis_smpl,
-        )
+    run_pico_manager(
+        port=args.port,
+        buffer_size=args.buffer_size,
+        num_frames_to_send=args.num_frames_to_send,
+        target_fps=args.target_fps,
+        use_cuda=args.cuda,
+        record_dir=args.record_dir,
+        record_format=args.record_format,
+        zmq_feedback_host=args.zmq_feedback_host,
+        zmq_feedback_port=args.zmq_feedback_port,
+    )
